@@ -21,9 +21,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_BUILD_RPATH_USE_ORIGIN TRUE)
 
 configure_file(
-  ${CMAKE_CURRENT_SOURCE_DIR}/CMake/Version.hpp.in
-  ${CMAKE_CURRENT_BINARY_DIR}/include/TungstenCore/Version.hpp
-  @ONLY
+    ${CMAKE_CURRENT_SOURCE_DIR}/CMake/Version.hpp.in
+    ${CMAKE_CURRENT_BINARY_DIR}/include/TungstenCore/Version.hpp
+    @ONLY
 )
 
 # Add TungstenUtils
@@ -87,7 +87,7 @@ install(FILES
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/TungstenCore
 )
 
-# Uninstall logic. Only defined if this is the top-level project
+# Uninstall logic. Only defined if this is the top-level project.
 if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
     configure_file(
         "${CMAKE_CURRENT_SOURCE_DIR}/CMake/cmake_uninstall.cmake.in"
