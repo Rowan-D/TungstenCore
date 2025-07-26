@@ -2,6 +2,7 @@
 #define TUNGSTEN_CORE_COMPONENT_MANAGER_HPP
 
 #include "TungstenCore.hpp"
+#include "TungstenUtils/macros/nameof.hpp"
 
 namespace wCore
 {
@@ -17,7 +18,7 @@ namespace wCore
         template<typename T>
         void Add()
         {
-            const std::string_View name = W_NAME_OF(T);
+            const std::string_view name = W_NAME_OF(T);
         }
 
     private:

@@ -6,9 +6,9 @@ namespace wCore
     {
     }
 
-    bool Application::Run()
+    Application::RunOutput Application::Run()
     {
-        return true;
+        return Application::RunOutput(0);
     }
 
     uint32_t Application::CreateScene()

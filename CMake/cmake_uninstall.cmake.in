@@ -55,7 +55,10 @@ function(remove_empty_parents dir limit)
         endif()
 
         message(STATUS "Removing empty directory: ${current}")
-        file(REMOVE "${current}")
+        file(REMOVE_RECURSE "${current}")
+        if(IS_DIRECTORY "${current}")
+            message(SEND_ERROR " Failed to remove empty directory: ${current}")
+        endif()
 
         get_filename_component(current "${current}" DIRECTORY)
     endwhile()
