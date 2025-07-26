@@ -1,0 +1,87 @@
+
+set(manifest_path "@CMAKE_CURRENT_BINARY_DIR@/install_manifest.txt")
+if(NOT EXISTS "${manifest_path}")
+    message(FATAL_ERROR " Uninstall failed: '${manifest_path}' not found. Run install first.")
+endif()
+
+if(NOT DEFINED CMAKE_INSTALL_PREFIX)
+    set(CMAKE_INSTALL_PREFIX "@CMAKE_INSTALL_PREFIX@")
+endif()
+
+file(READ "${manifest_path}" files_raw)
+string(REGEX REPLACE "\r?\n" ";" files "${files_raw}")
+
+set(full_paths "")
+foreach(file IN LISTS files)
+    string(STRIP "${file}" file)
+    if(file STREQUAL "")
+        continue()
+    endif()
+
+    # Resolve DESTDIR prefix (if set)
+    if(DEFINED ENV{DESTDIR})
+        list(APPEND full_paths "$ENV{DESTDIR}${file}")
+    else()
+        list(APPEND full_paths "${file}")
+    endif()
+endforeach()
+
+list(REMOVE_DUPLICATES full_paths)
+
+set(success_count 0)
+set(fail_count 0)
+
+function(remove_empty_parents dir limit)
+    # Convert to fully normalized absolute paths
+    file(REAL_PATH "${dir}" abs_dir)
+    file(REAL_PATH "${limit}" abs_limit)
+
+    # Safety check: ensure abs_dir starts with abs_limit
+    string(FIND "${abs_dir}" "${abs_limit}" pos)
+    if(NOT pos EQUAL 0)
+        message(WARNING " Refusing to remove: '${abs_dir}' is not under '${abs_limit}'")
+        return()
+    endif()
+    set(current "${abs_dir}")
+
+    while(NOT current STREQUAL "${abs_limit}")
+        if(NOT IS_DIRECTORY "${current}")
+            break()
+        endif()
+
+        file(GLOB children "${current}/*")
+        if(NOT children STREQUAL "")
+            break()
+        endif()
+
+        message(STATUS "Removing empty directory: ${current}")
+        file(REMOVE "${current}")
+
+        get_filename_component(current "${current}" DIRECTORY)
+    endwhile()
+endfunction()
+
+foreach(full_path IN LISTS full_paths)
+    if(IS_SYMLINK "${full_path}")
+        message(STATUS "Removing symlink: ${full_path}")
+    elseif(EXISTS "${full_path}")
+        message(STATUS "Removing file: ${full_path}")
+    else()
+        message(STATUS "Already removed or missing: ${full_path}")
+        continue()
+    endif()
+
+    file(REMOVE "${full_path}")
+    if(EXISTS "${full_path}" OR IS_SYMLINK "${full_path}")
+        message(ERROR " Failed to remove: ${full_path}")
+        math(EXPR fail_count "${fail_count}+1")
+    else()
+        math(EXPR success_count "${success_count}+1")
+    endif()
+
+    # Get and clean up directory if empty
+    get_filename_component(dir "${full_path}" DIRECTORY)
+    remove_empty_parents("${dir}" "${CMAKE_INSTALL_PREFIX}")
+endforeach()
+
+message(STATUS "Uninstall process completed: ${success_count} removed, ${fail_count} failed.")
