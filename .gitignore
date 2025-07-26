@@ -1,0 +1,7 @@
+build/
+out/
+.vs/
+.vscode/
+CMakeLists.txt.user
+.kdev4/
+*.kdev4
