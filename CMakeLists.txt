@@ -47,6 +47,10 @@ target_precompile_headers(TungstenCore PRIVATE src/wCorePCH.hpp)
 
 target_link_libraries(TungstenCore PUBLIC TungstenUtils)
 
+set_target_properties(TungstenCore PROPERTIES
+    VERSION ${PROJECT_VERSION}
+)
+
 # Installation logic
 include(GNUInstallDirs)
 
