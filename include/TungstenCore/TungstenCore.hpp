@@ -34,7 +34,7 @@ namespace wCore
         uint32_t GetComponentType(uint32_t sceneIndex, uint32_t componentIndex);
         uint32_t GetComponentChildCount(uint32_t sceneIndex, uint32_t componentIndex);
 
-        inline const ComponentManager& GetComponentManager() const { return m_componentManager; }
+        inline ComponentManager& GetComponentManager() { return m_componentManager; }
 
     private:
         ComponentManager m_componentManager;
