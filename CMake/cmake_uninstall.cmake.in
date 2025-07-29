@@ -1,8 +1,9 @@
 
 set(manifest_path "@CMAKE_CURRENT_BINARY_DIR@/install_manifest.txt")
 message(STATUS "Using install manifest: ${manifest_path}")
+
 if(NOT EXISTS "${manifest_path}")
-    message(FATAL_ERROR " Uninstall failed: '${manifest_path}' not found. Run install first.")
+    message(FATAL_ERROR "Uninstall failed: '${manifest_path}' not found. Run install first.")
 endif()
 
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
@@ -12,6 +13,80 @@ endif()
 file(READ "${manifest_path}" files_raw)
 string(REGEX REPLACE "\r?\n" ";" files "${files_raw}")
 
+set(success_count 0)
+set(fail_count 0)
+
+function(path_has_prefix prefix path outvar)
+    if("${prefix}" STREQUAL "" OR "${path}" STREQUAL "")
+        set(${outvar} FALSE PARENT_SCOPE)
+        return()
+    endif()
+
+    file(TO_CMAKE_PATH "${prefix}" _p)
+    file(TO_CMAKE_PATH "${path}"   _q)
+    if(NOT _p STREQUAL "/")
+        string(REGEX REPLACE "/+$" "" _p "${_p}")
+    endif()
+    if(NOT _q STREQUAL "/")
+        string(REGEX REPLACE "/+$" "" _q "${_q}")
+    endif()
+    if(WIN32)
+        string(TOLOWER "${_p}" _p)
+        string(TOLOWER "${_q}" _q)
+    endif()
+
+    string(LENGTH "${_p}" _plen)
+    string(LENGTH "${_q}" _qlen)
+    if(_qlen LESS _plen)
+        set(${outvar} FALSE PARENT_SCOPE)
+        return()
+    endif()
+
+    string(SUBSTRING "${_q}" 0 ${_plen} _head)
+    if(NOT _head STREQUAL "${_p}")
+        set(${outvar} FALSE PARENT_SCOPE)
+        return()
+    endif()
+
+    if(_qlen EQUAL _plen)
+        set(${outvar} TRUE PARENT_SCOPE)
+    else()
+        string(SUBSTRING "${_q}" ${_plen} 1 _sep)
+        if(_sep STREQUAL "/")
+            set(${outvar} TRUE PARENT_SCOPE)
+        else()
+            set(${outvar} FALSE PARENT_SCOPE)
+        endif()
+    endif()
+endfunction()
+
+function(resolve_destdir_path input_path output_var)
+    set(_resolved "${input_path}")
+
+    if(DEFINED ENV{DESTDIR} AND NOT "$ENV{DESTDIR}" STREQUAL "")
+        file(TO_CMAKE_PATH "$ENV{DESTDIR}" _dest)
+        string(REGEX REPLACE "/+$" "" _dest "${_dest}")
+
+        # Avoid double prefix if manifest already lives under DESTDIR
+        path_has_prefix("${_dest}" "${_resolved}" _already)
+        if(NOT _already)
+            if("${_resolved}" MATCHES "^/")
+                set(_resolved "${_dest}${_resolved}")
+            else()
+                set(_resolved "${_dest}/${_resolved}")
+            endif()
+            # collapse accidental '//' joins
+            string(REGEX REPLACE "/+" "/" _resolved "${_resolved}")
+        endif()
+    endif()
+
+    if(NOT IS_ABSOLUTE "${_resolved}")
+        message(WARNING "Resolved uninstall path is not absolute: ${_resolved}")
+    endif()
+
+    set(${output_var} "${_resolved}" PARENT_SCOPE)
+endfunction()
+
 set(full_paths "")
 foreach(file IN LISTS files)
     string(STRIP "${file}" file)
@@ -19,57 +94,11 @@ foreach(file IN LISTS files)
         continue()
     endif()
 
-    # Resolve DESTDIR prefix (if set)
-    if(DEFINED ENV{DESTDIR})
-        file(TO_CMAKE_PATH "$ENV{DESTDIR}" DESTDIR_PATH)
-        string(REGEX REPLACE "/$" "" DESTDIR_PATH "${DESTDIR_PATH}")
-        set(_resolved_path "${DESTDIR_PATH}${file}")
-        if(NOT IS_ABSOLUTE "${_resolved_path}")
-            message(WARNING "Resolved uninstall path is not absolute: ${_resolved_path}")
-        endif()
-        list(APPEND full_paths "${_resolved_path}")
-    else()
-        list(APPEND full_paths "${file}")
-    endif()
+    resolve_destdir_path("${file}" resolved)
+    list(APPEND full_paths "${resolved}")
 endforeach()
 
 list(REMOVE_DUPLICATES full_paths)
-
-set(success_count 0)
-set(fail_count 0)
-
-function(remove_empty_parents dir limit)
-    # Convert to fully normalized absolute paths
-    file(REAL_PATH "${dir}" abs_dir)
-    file(REAL_PATH "${limit}" abs_limit)
-
-    # Safety check: ensure abs_dir starts with abs_limit
-    string(FIND "${abs_dir}" "${abs_limit}" pos)
-    if(NOT pos EQUAL 0)
-        message(WARNING " Refusing to remove: '${abs_dir}' is not under '${abs_limit}'")
-        return()
-    endif()
-    set(current "${abs_dir}")
-
-    while(NOT current STREQUAL "${abs_limit}")
-        if(NOT IS_DIRECTORY "${current}")
-            break()
-        endif()
-
-        file(GLOB children "${current}/*")
-        if(NOT children STREQUAL "")
-            break()
-        endif()
-
-        message(STATUS "Removing empty directory: ${current}")
-        file(REMOVE_RECURSE "${current}")
-        if(IS_DIRECTORY "${current}")
-            message(SEND_ERROR " Failed to remove empty directory: ${current}")
-        endif()
-
-        get_filename_component(current "${current}" DIRECTORY)
-    endwhile()
-endfunction()
 
 foreach(full_path IN LISTS full_paths)
     if(IS_SYMLINK "${full_path}")
@@ -83,15 +112,11 @@ foreach(full_path IN LISTS full_paths)
 
     file(REMOVE "${full_path}")
     if(EXISTS "${full_path}" OR IS_SYMLINK "${full_path}")
-        message(ERROR " Failed to remove: ${full_path}")
+        message(SEND_ERROR "Failed to remove: ${full_path}")
         math(EXPR fail_count "${fail_count} + 1")
     else()
         math(EXPR success_count "${success_count} + 1")
     endif()
-
-    # Get and clean up directory if empty
-    get_filename_component(dir "${full_path}" DIRECTORY)
-    remove_empty_parents("${dir}" "${CMAKE_INSTALL_PREFIX}")
 endforeach()
 
 message(STATUS "Uninstall process completed: ${success_count} removed, ${fail_count} failed.")

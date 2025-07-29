@@ -17,6 +17,8 @@ project(TungstenCore VERSION ${TUNGSTENCORE_VERSION} LANGUAGES CXX)
 
 message(STATUS "TungstenCore version: ${PROJECT_VERSION}")
 
+option(TUNGSTENCORE_INSTALL_LIBRARY "Install library, headers, and CMake config" OFF)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_BUILD_RPATH_USE_ORIGIN TRUE)
@@ -28,6 +30,11 @@ configure_file(
 )
 
 # Add TungstenUtils
+if(TUNGSTENCORE_INSTALL_LIBRARY)
+    set(TUNGSTENUTILS_INSTALL_LIBRARY ON)
+else()
+    set(TUNGSTENUTILS_INSTALL_LIBRARY OFF)
+endif()
 add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/external/TungstenUtils)
 
 add_library(TungstenCore
@@ -52,45 +59,47 @@ set_target_properties(TungstenCore PROPERTIES
 )
 
 # Installation logic
-include(GNUInstallDirs)
+if(TUNGSTENCORE_INSTALL_LIBRARY)
+    include(GNUInstallDirs)
 
-install(TARGETS TungstenCore
-        EXPORT TungstenCoreTargets
-        INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(TARGETS TungstenCore
+            EXPORT TungstenCoreTargets
+            INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+            ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
-install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+    install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
-install(FILES
-    "${CMAKE_CURRENT_BINARY_DIR}/include/TungstenCore/Version.hpp"
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/TungstenCore
-)
+    install(FILES
+        "${CMAKE_CURRENT_BINARY_DIR}/include/TungstenCore/Version.hpp"
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/TungstenCore
+    )
 
-install(EXPORT TungstenCoreTargets
-        FILE TungstenCoreTargets.cmake
-        NAMESPACE Tungsten::
-        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/TungstenCore)
+    install(EXPORT TungstenCoreTargets
+            FILE TungstenCoreTargets.cmake
+            NAMESPACE Tungsten::
+            DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/TungstenCore)
 
-include(CMakePackageConfigHelpers)
-write_basic_package_version_file(
-    "${CMAKE_CURRENT_BINARY_DIR}/TungstenCoreConfigVersion.cmake"
-    VERSION ${TUNGSTENCORE_VERSION}
-    COMPATIBILITY SameMajorVersion
-)
+    include(CMakePackageConfigHelpers)
+    write_basic_package_version_file(
+        "${CMAKE_CURRENT_BINARY_DIR}/TungstenCoreConfigVersion.cmake"
+        VERSION ${TUNGSTENCORE_VERSION}
+        COMPATIBILITY SameMajorVersion
+    )
 
-configure_package_config_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/CMake/TungstenCoreConfig.cmake.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/TungstenCoreConfig.cmake"
-    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/TungstenCore
-)
+    configure_package_config_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/CMake/TungstenCoreConfig.cmake.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/TungstenCoreConfig.cmake"
+        INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/TungstenCore
+    )
 
-install(FILES
-    "${CMAKE_CURRENT_BINARY_DIR}/TungstenCoreConfig.cmake"
-    "${CMAKE_CURRENT_BINARY_DIR}/TungstenCoreConfigVersion.cmake"
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/TungstenCore
-)
+    install(FILES
+        "${CMAKE_CURRENT_BINARY_DIR}/TungstenCoreConfig.cmake"
+        "${CMAKE_CURRENT_BINARY_DIR}/TungstenCoreConfigVersion.cmake"
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/TungstenCore
+    )
+endif()
 
 # Uninstall logic. Only defined if this is the top-level project.
 if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
