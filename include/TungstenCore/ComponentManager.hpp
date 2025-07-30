@@ -23,6 +23,17 @@ namespace wCore
 
     private:
     };
+
+    template<typename T>
+    class ComponentID
+    {
+    public:
+        static inline uint32_t Get() { return s_id; }
+        static inline void Set(uint32_t id) { s_id = id; }
+
+    private:
+        static uint32_t s_id;
+    };
 }
 
 #endif
