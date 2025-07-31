@@ -39,8 +39,12 @@ add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/external/TungstenUtils)
 
 add_library(TungstenCore
     include/TungstenCore/TungstenCore.hpp
+    include/TungstenCore/Application.hpp
+    include/TungstenCore/ComponentSystem.hpp
+    include/TungstenCore/ComponentSetup.hpp
+    include/TungstenCore/Scene.hpp
     src/wCorePCH.cpp
-    src/TungstenCore.cpp
+    src/Application.cpp
 )
 
 target_include_directories(TungstenCore PUBLIC

@@ -100,47 +100,6 @@ endforeach()
 
 list(REMOVE_DUPLICATES full_paths)
 
-<<<<<<< Updated upstream
-=======
-set(success_count 0)
-set(fail_count 0)
-
-function(remove_empty_parents dir limit)
-    # Convert to fully normalized absolute paths
-    file(REAL_PATH "${dir}" abs_dir)
-    file(REAL_PATH "${limit}" abs_limit)
-
-    # Safety check: ensure abs_dir starts with abs_limit
-    string(FIND "${abs_dir}" "${abs_limit}" pos)
-    if(NOT pos EQUAL 0)
-        message(WARNING " Refusing to remove: '${abs_dir}' is not under '${abs_limit}'")
-        return()
-    endif()
-    set(current "${abs_dir}")
-
-    while(NOT current STREQUAL "${abs_limit}")
-        if(NOT IS_DIRECTORY "${current}")
-            break()
-        endif()
-
-        file(GLOB children "${current}/*")
-        if(NOT children STREQUAL "")
-            break()
-        endif()
-
-        message(STATUS "Removing empty directory: ${current}")
-        file(REMOVE "${current}")
-
-        if(ESISTS "${current}" OR IS_DIRECTORY "${current}")
-            message(SEND_ERROR " Failed to remove empty directory: ${current}")
-            break()
-        endif()
-
-        get_filename_component(current "${current}" DIRECTORY)
-    endwhile()
-endfunction()
-
->>>>>>> Stashed changes
 foreach(full_path IN LISTS full_paths)
     if(IS_SYMLINK "${full_path}")
         message(STATUS "Removing symlink: ${full_path}")

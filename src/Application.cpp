@@ -1,4 +1,5 @@
-#include "TungstenCore/TungstenCore.hpp"
+#include "wCorePCH.hpp"
+#include "TungstenCore/Application.hpp"
 
 namespace wCore
 {
@@ -10,7 +11,7 @@ namespace wCore
     {
         return Application::RunOutput(0);
     }
-
+/*
     uint32_t Application::CreateScene()
     {
         m_scenes.push_back(Scene());
@@ -20,5 +21,5 @@ namespace wCore
     void Application::DestroyScene(uint32_t sceneIndex)
     {
         m_scenes.erase(m_scenes.begin() + sceneIndex);
-    }
+    }*/
 }
