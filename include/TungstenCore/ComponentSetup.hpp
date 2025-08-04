@@ -8,54 +8,77 @@
 
 namespace wCore
 {
+    using ComponentTypeIndex = wIndex;
+    inline constexpr ComponentTypeIndex InvalidComponentType = 0;
+    inline constexpr ComponentTypeIndex ComponentTypeIndexStart = 1;
+
+    struct ComponentLayout
+    {
+        std::size_t size{};
+        std::size_t alignment{};
+    };
+
+    using ComponentConstructorFn = void(*)(void* destination);
+
+    template<typename T>
+    void ConstructInPlace(void* dest) {
+        new (dest) T();  // calls T's default constructor
+    }
+
     class ComponentSetup
     {
     public:
-        static constexpr wIndex IDStart = 1;
+        ComponentSetup();
 
-        ComponentSetup()
-            : m_typeNames()
-        {
-        }
+        ComponentSetup(const ComponentSetup&) = delete;
+        ComponentSetup& operator=(const ComponentSetup&) = delete;
 
         template<typename T>
         void Add(std::string_view typeName)
         {
-            W_ASSERT(!ComponentID<T>::Get(), "Component: {} Allready added to ComponentSetup!", typeName);
-            m_typeNames.emplace_back(typeName);
-            ComponentID<T>::Set(m_typeNames.size());
+            W_ASSERT(!StaticComponentID<T>::Get(), "Component: {} Allready added to ComponentSetup!", typeName);
+            m_names.emplace_back(typeName);
+            m_layouts.emplace_back(sizeof(T), alignof(T));
+            m_constructors.emplace_back(&ConstructInPlace<T>);
+            StaticComponentID<T>::Set(m_names.size());
         }
 
         template<typename T>
-        const std::string& GetComponentTypeName() const
+        ComponentTypeIndex GetComponentTypeIndex() const
         {
-            W_ASSERT(ComponentID<T>::Get(), "Type: {} not added to ComponentSetup", wUtils::DebugGetTypeName<T>());
-            return GetComponentTypeNameFromID(ComponentID<T>::Get());
+            W_ASSERT(StaticComponentID<T>::Get(), "Type: {} not added to ComponentSetup", wUtils::DebugGetTypeName<T>());
+            return StaticComponentID<T>::Get();
         }
 
-        inline const std::string& GetComponentTypeNameFromID(wIndex id) const { W_ASSERT(id != 0, "Component Type Index 0 is null"); W_ASSERT(id <= m_typeNames.size(), "Component Type Index out of Range! id: {} Component Type Count: {}", id, m_typeNames.size()); return m_typeNames[id - 1]; }
+        template<typename T>
+        std::string_view GetComponentTypeName() const
+        {
+            W_ASSERT(GetComponentTypeIndex<T>(), "Type: {} not added to ComponentSetup", wUtils::DebugGetTypeName<T>());
+            return GetComponentTypeNameFromTypeIndex(StaticComponentID<T>::Get());
+        }
 
-        inline wIndex GetComponentTypeCount() { return m_typeNames.size(); }
+        inline std::string_view GetComponentTypeNameFromTypeIndex(ComponentTypeIndex componentTypeIndex) const { W_ASSERT(componentTypeIndex != 0, "ComponentTypeIndex 0 is Invalid"); W_ASSERT(componentTypeIndex <= m_names.size(), "ComponentTypeIndex: {} out of Range! Component Type Count: {}", componentTypeIndex, m_names.size()); return m_names[componentTypeIndex - 1]; }
+        inline ComponentLayout GetComponentLayoutFromTypeIndex(ComponentTypeIndex componentTypeIndex) const { W_ASSERT(componentTypeIndex != 0, "ComponentTypeIndex 0 is Invalid"); W_ASSERT(componentTypeIndex <= m_layouts.size(), "ComponentTypeIndex: {} out of Range! Component Type Count: {}", componentTypeIndex, m_layouts.size()); return m_layouts[componentTypeIndex - 1]; }
+        inline void ConstructComponentFromTypeIndex(ComponentTypeIndex componentTypeIndex, void* dest) const { W_ASSERT(componentTypeIndex != 0, "ComponentTypeIndex 0 is Invalid"); W_ASSERT(componentTypeIndex <= m_layouts.size(), "ComponentTypeIndex: {} out of Range! Component Type Count: {}", componentTypeIndex, m_layouts.size()); m_constructors[componentTypeIndex - 1](dest); }
+
+        inline wIndex GetComponentTypeCount() const noexcept { return m_names.size(); }
 
     private:
         template<typename T>
-        class ComponentID
+        class StaticComponentID
         {
         public:
-            static inline wIndex Get() { return s_id; }
-            static inline void Set(wIndex id) { s_id = id; }
+            static inline ComponentTypeIndex Get() { return s_id; }
+            static inline void Set(ComponentTypeIndex id) { s_id = id; }
 
         private:
-            static wIndex s_id;
+            static inline ComponentTypeIndex s_id;
         };
 
-        std::vector<std::string> m_typeNames;
-
-        friend class ComponentSystem;
+        std::vector<std::string> m_names;
+        std::vector<ComponentLayout> m_layouts;
+        std::vector<ComponentConstructorFn> m_constructors;
     };
-
-    template<typename T>
-    wIndex ComponentSetup::ComponentID<T>::s_id = 0;
 }
 
 #endif

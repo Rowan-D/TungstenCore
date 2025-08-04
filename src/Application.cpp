@@ -9,6 +9,15 @@ namespace wCore
 
     Application::RunOutput Application::Run()
     {
+        W_DEBUG_LOG_INFO("Hello, From Application.Run!");
+
+        W_DEBUG_LOG_INFO("Creating Scene...");
+        SceneIndex sceneIndex = m_componentSystem.CreateScene();
+        W_DEBUG_LOG_INFO("Created Scene At Index: {}", sceneIndex);
+
+        m_componentSystem.CreateComponent(1, sceneIndex);
+        m_componentSystem.CreateComponent(2, sceneIndex);
+
         return Application::RunOutput(0);
     }
 /*
