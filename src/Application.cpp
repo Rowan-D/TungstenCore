@@ -16,6 +16,9 @@ namespace wCore
         W_DEBUG_LOG_INFO("Created Scene At Index: {}", sceneIndex);
 
         m_componentSystem.CreateComponent(1, sceneIndex);
+        m_componentSystem.CreateComponent(1, sceneIndex);
+        m_componentSystem.CreateComponent(1, sceneIndex);
+        m_componentSystem.CreateComponent(1, sceneIndex);
         m_componentSystem.CreateComponent(2, sceneIndex);
 
         return Application::RunOutput(0);
