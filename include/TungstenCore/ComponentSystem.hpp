@@ -28,7 +28,7 @@ namespace wCore
         void DestroyScene(SceneIndex sceneIndex);
         bool SceneExists(SceneIndex sceneIndex);
         //inline const Scene& GetScene(uint32_t sceneIndex) const { return m_scenes[sceneIndex - 1]; }
-        //inline uint32_t GetComponentCount(uint32_t sceneIndex) const { return m_scenes.size(); }
+        wIndex GetComponentCount(uint32_t sceneIndex) const;
 
         inline wIndex SceneCount() const noexcept { return m_sceneData.size(); }
 
@@ -38,6 +38,7 @@ namespace wCore
         template<typename T>
         void ReserveComponent(wIndex sceneIndex, wIndex componentCapacity)
         {
+
         }
 
         /*template<typename T>
@@ -57,6 +58,7 @@ namespace wCore
         T& GetComponentCapacity(wIndex sceneIndex, wIndex componentIndex);*/
 
         inline ComponentSetup& GetComponentSetup() { return m_componentSetup; };
+        inline const ComponentSetup& GetComponentSetup() const { return m_componentSetup; }
 
     private:
         static constexpr wIndex InitialCapacity = 8;
@@ -84,11 +86,15 @@ namespace wCore
         template<typename T>
         void KnownListReserve(void** listStart, wIndex num)
         {
-            const T* const capacity = static_cast<T*>(listStart[CapacityPtrOffset]);
-            const T* const begin = static_cast<T*>(listStart[BeginPtrOffset]);
-            if (num > capacity - begin)
+            const void*& capacityVoid = listStart[CapacityPtrOffset];
+            if (capacityVoid)
             {
-                ReallocateKnownList<T>(listStart, num);
+                const T* const capacity = static_cast<T*>(capacityVoid);
+                const T* const begin = static_cast<T*>(listStart[BeginPtrOffset]);
+                if (num > capacity - begin)
+                {
+                    ReallocateKnownList<T>(listStart, num);
+                }
             }
         }
 
@@ -227,10 +233,25 @@ namespace wCore
             }
         }
 
+        template<typename T>
+        wIndex KnownListCount(void** listStart) const
+        {
+            T* const end = static_cast<T*>(listStart[EndPtrOffset]);
+            T* const begin = static_cast<T*>(listStart[BeginPtrOffset]);
+            return end - begin;
+        }
+
+        template<typename T>
+        static T* EmptySentinel() noexcept
+        {
+            alignas(T) static std::byte raw[sizeof(T)];
+            return reinterpret_cast<T*>(&raw);
+        }
+
         void ReallocateScenes(wIndex sceneCapacity);
         void DeleteSceneContent(std::size_t sceneStartPtrIndex);
 
-        void ReallocateComponentList(SceneIndex sceneIndex, ComponentTypeIndex componentTypeIndex, wIndex newCapacity);
+        void ReallocateComponentList(std::size_t componentListStartPtrIndex, ComponentTypeIndex componentTypeIndex, wIndex newCapacity);
         void DestroyComponentList(std::size_t sceneStartPtrIndex, ComponentTypeIndex componentTypeIndex);
 
         static inline constexpr wIndex CalculateNextCapacity(wIndex requested, wIndex current) noexcept

@@ -4,7 +4,7 @@
 // invalid:
 // start random
 // end true
-// capacity false
+// capacity internal
 
 namespace wCore
 {
@@ -106,6 +106,12 @@ namespace wCore
         return !m_componentLists[sceneStartPtrIndex + 1] && m_componentLists[sceneStartPtrIndex + 2];
     }
 
+    wIndex ComponentSystem::GetComponentCount(uint32_t sceneIndex) const
+    {
+        const std::size_t sceneStartPtrIndex = GetSceneStartPtrIndex(sceneIndex);
+        return KnownListCount<Component>(m_componentLists + sceneStartPtrIndex + ComponentListPtrOffset);
+    }
+
     void ComponentSystem::ReserveComponent(ComponentTypeIndex componentTypeIndex, SceneIndex sceneIndex, wIndex componentCapacity)
     {
         const std::size_t componentListStartPtrIndex = GetComponentStartPtrIndex(sceneIndex, componentTypeIndex);
@@ -116,7 +122,7 @@ namespace wCore
 
         if (componentCapacity * layout.size > componentListCapacity - componentListBegin)
         {
-            ReallocateComponentList(sceneIndex, componentTypeIndex, componentCapacity);
+            ReallocateComponentList(componentListStartPtrIndex, componentTypeIndex, componentCapacity);
         }
     }
 
@@ -134,7 +140,7 @@ namespace wCore
 
         if (componentListEnd == componentListCapacity)
         {
-            ReallocateComponentList(sceneIndex, componentTypeIndex, CalculateNextCapacity(listIndex + 1, (componentListCapacity - componentListBegin) / layout.size));
+            ReallocateComponentList(componentListStartPtrIndex, componentTypeIndex, CalculateNextCapacity(listIndex + 1, (componentListCapacity - componentListBegin) / layout.size));
             componentListEnd = static_cast<std::byte*>(componentListEndVoid);
         }
 
@@ -176,9 +182,8 @@ namespace wCore
         }
     }
 
-    void ComponentSystem::ReallocateComponentList(SceneIndex sceneIndex, ComponentTypeIndex componentTypeIndex, wIndex newCapacity)
+    void ComponentSystem::ReallocateComponentList(std::size_t componentListStartPtrIndex, ComponentTypeIndex componentTypeIndex, wIndex newCapacity)
     {
-        const std::size_t componentListStartPtrIndex = GetComponentStartPtrIndex(sceneIndex, componentTypeIndex);
         const ComponentLayout layout = m_componentSetup.GetComponentLayoutFromTypeIndex(componentTypeIndex);
 
         void*& componentListEndVoid = m_componentLists[componentListStartPtrIndex + EndPtrOffset];

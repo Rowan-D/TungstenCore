@@ -31,9 +31,7 @@ namespace wCore
         {
             W_ASSERT(!StaticComponentID<T>::Get(), "Component: {} Allready added to ComponentSetup!", typeName);
             m_names.emplace_back(typeName);
-            m_layouts.emplace_back(sizeof(T), alignof(T));
-            m_constructors.emplace_back(&ConstructInPlace<T>);
-            m_destructors.emplace_back(&DestroyInPlace<T>);
+            m_types.emplace_back(ComponentLayout{sizeof(T), alignof(T)}, &ConstructInPlace<T>, &DestroyInPlace<T>);
             StaticComponentID<T>::Set(m_names.size());
         }
 
@@ -52,13 +50,26 @@ namespace wCore
         }
 
         inline std::string_view GetComponentTypeNameFromTypeIndex(ComponentTypeIndex componentTypeIndex) const { W_ASSERT(componentTypeIndex != 0, "ComponentTypeIndex 0 is Invalid"); W_ASSERT(componentTypeIndex <= m_names.size(), "ComponentTypeIndex: {} out of Range! Component Type Count: {}", componentTypeIndex, m_names.size()); return m_names[componentTypeIndex - 1]; }
-        inline ComponentLayout GetComponentLayoutFromTypeIndex(ComponentTypeIndex componentTypeIndex) const { W_ASSERT(componentTypeIndex != 0, "ComponentTypeIndex 0 is Invalid"); W_ASSERT(componentTypeIndex <= m_layouts.size(), "ComponentTypeIndex: {} out of Range! Component Type Count: {}", componentTypeIndex, m_layouts.size()); return m_layouts[componentTypeIndex - 1]; }
-        inline void ConstructComponentInPlaceFromTypeIndex(ComponentTypeIndex componentTypeIndex, void* dest) const { W_ASSERT(componentTypeIndex != 0, "ComponentTypeIndex 0 is Invalid"); W_ASSERT(componentTypeIndex <= m_layouts.size(), "ComponentTypeIndex: {} out of Range! Component Type Count: {}", componentTypeIndex, m_layouts.size()); m_constructors[componentTypeIndex - 1](dest); }
-        inline void DestroyComponentInPlaceFromTypeIndex(ComponentTypeIndex componentTypeIndex, void* dest) const { W_ASSERT(componentTypeIndex != 0, "ComponentTypeIndex 0 is Invalid"); W_ASSERT(componentTypeIndex <= m_layouts.size(), "ComponentTypeIndex: {} out of Range! Component Type Count: {}", componentTypeIndex, m_layouts.size()); m_destructors[componentTypeIndex - 1](dest); }
+        inline ComponentLayout GetComponentLayoutFromTypeIndex(ComponentTypeIndex componentTypeIndex) const { W_ASSERT(componentTypeIndex != 0, "ComponentTypeIndex 0 is Invalid"); W_ASSERT(componentTypeIndex <= m_layouts.size(), "ComponentTypeIndex: {} out of Range! Component Type Count: {}", componentTypeIndex, m_layouts.size()); return m_types[componentTypeIndex - 1].layout; }
+        inline void ConstructComponentInPlaceFromTypeIndex(ComponentTypeIndex componentTypeIndex, void* dest) const { W_ASSERT(componentTypeIndex != 0, "ComponentTypeIndex 0 is Invalid"); W_ASSERT(componentTypeIndex <= m_layouts.size(), "ComponentTypeIndex: {} out of Range! Component Type Count: {}", componentTypeIndex, m_layouts.size()); m_types[componentTypeIndex - 1].constructor(dest); }
+        inline void DestroyComponentInPlaceFromTypeIndex(ComponentTypeIndex componentTypeIndex, void* dest) const { W_ASSERT(componentTypeIndex != 0, "ComponentTypeIndex 0 is Invalid"); W_ASSERT(componentTypeIndex <= m_layouts.size(), "ComponentTypeIndex: {} out of Range! Component Type Count: {}", componentTypeIndex, m_layouts.size()); m_types[componentTypeIndex - 1].destructor(dest); }
 
         inline wIndex GetComponentTypeCount() const noexcept { return m_names.size(); }
 
     private:
+        using ComponentConstructorFn = void(*)(void* destination);
+        using ComponentDestructorFn = void(*)(void* destination);
+
+        struct ComponentType
+        {
+            ComponentType(ComponentLayout a_componentLayout, ComponentConstructorFn a_constructor, ComponentDestructorFn a_destructor)
+                : layout(a_componentLayout), constructor(a_constructor), destructor(a_destructor) {}
+
+            ComponentLayout layout;
+            ComponentConstructorFn constructor;
+            ComponentDestructorFn destructor;
+        };
+
         template<typename T>
         class StaticComponentID
         {
@@ -69,9 +80,6 @@ namespace wCore
         private:
             static inline ComponentTypeIndex s_id;
         };
-
-        using ComponentConstructorFn = void(*)(void* destination);
-        using ComponentDestructorFn = void(*)(void* destination);
 
         template<typename T>
         static void ConstructInPlace(void* dest) {
@@ -84,9 +92,7 @@ namespace wCore
         }
 
         std::vector<std::string> m_names;
-        std::vector<ComponentLayout> m_layouts;
-        std::vector<ComponentConstructorFn> m_constructors;
-        std::vector<ComponentDestructorFn> m_destructors;
+        std::vector<ComponentType> m_types;
     };
 }
 
