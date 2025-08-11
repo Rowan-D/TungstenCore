@@ -24,21 +24,22 @@ namespace wCore
         ComponentSystem& operator=(const ComponentSetup&) = delete;
 
         void ReserveScenes(wIndex sceneCapacity);
-        SceneIndex CreateScene();
+        [[nodiscard]] SceneIndex CreateScene();
         void DestroyScene(SceneIndex sceneIndex);
-        bool SceneExists(SceneIndex sceneIndex);
+        inline bool SceneExists(SceneIndex sceneIndex) { return m_componentLists[GetSceneStartListIndex(sceneIndex)].begin; }
         //inline const Scene& GetScene(uint32_t sceneIndex) const { return m_scenes[sceneIndex - 1]; }
         wIndex GetComponentCount(uint32_t sceneIndex) const;
 
+        // TODO:
         inline wIndex SceneCount() const noexcept { return m_sceneData.size(); }
 
         void ReserveComponent(ComponentTypeIndex componentTypeIndex, SceneIndex sceneIndex, wIndex componentCapacity);
         ComponentIndex CreateComponent(ComponentTypeIndex componentTypeIndex, SceneIndex sceneIndex);
 
-        template<typename T>
+        /*template<typename T>
         void ReserveComponent(wIndex sceneIndex, wIndex componentCapacity)
         {
-
+            KnownListReserve<T>(m_componentSetup.GetComponentTypeIndex<T>());
         }
 
         /*template<typename T>
@@ -63,12 +64,9 @@ namespace wCore
     private:
         static constexpr wIndex InitialCapacity = 8;
 
-        static constexpr std::size_t BeginPtrOffset = 0;
-        static constexpr std::size_t EndPtrOffset = 1;
-        static constexpr std::size_t CapacityPtrOffset = 2;
-
-        static constexpr std::size_t ComponentListPtrOffset = 0;
-        static constexpr std::size_t ComponentNameListPtrOffset = 3;
+        static constexpr std::size_t ComponentListOffset = 0;
+        static constexpr std::size_t ComponentNameListOffset = 1;
+        static constexpr std::size_t KnownListCount = 2;
 
         struct Component
         {
@@ -84,168 +82,116 @@ namespace wCore
         };
 
         template<typename T>
-        void KnownListReserve(void** listStart, wIndex num)
+        void ReserveKnownList(ComponentSetup::ListHeader& header, wIndex num)
         {
-            const void*& capacityVoid = listStart[CapacityPtrOffset];
-            if (capacityVoid)
+            if (num > header.Capacity<T>() - header.Begin<T>())
             {
-                const T* const capacity = static_cast<T*>(capacityVoid);
-                const T* const begin = static_cast<T*>(listStart[BeginPtrOffset]);
-                if (num > capacity - begin)
-                {
-                    ReallocateKnownList<T>(listStart, num);
-                }
+                ReallocateKnownList<T>(header, num);
             }
         }
 
         template<typename T>
-        wIndex KnownListAdd(void** listStart, T& value)
+        wIndex AddToKnownList(ComponentSetup::ListHeader& header, T& value)
         {
-            void*& endVoid = listStart[EndPtrOffset];
-            T* end = static_cast<T*>(endVoid);
-            const T* const begin = static_cast<T*>(listStart[BeginPtrOffset]);
-            const T* const capacity = static_cast<T*>(listStart[CapacityPtrOffset]);
+            T* end = header.End<T>();
+            const T* const begin = header.Begin<T>();
+            const T* const capacity = header.Capacity<T>();
             const wIndex oldCount = end - begin;
-
-            const bool aliasesSelf = (&value >= begin && &value < end);
 
             if (end == capacity)
             {
-                ReallocateKnownList<T>(listStart, CalculateNextCapacity(oldCount + 1, capacity - begin));
-                end = static_cast<T*>(endVoid);
-            }
-
-            if constexpr (std::is_trivially_copy_constructible_v<T>)
-            {
-                if (aliasesSelf)
+                if (&value >= begin && &value < end)
                 {
                     T tmp = value;
-                    std::construct_at(end, tmp);
-                }
-                else
-                {
-                    std::construct_at(end, value);
-                }
-            }
-            else
-            {
-                if (aliasesSelf)
-                {
-                    T tmp = value;
+                    ReallocateKnownList<T>(header, CalculateNextCapacity(oldCount + 1, capacity - begin));
+                    end = header.End<T>();
                     std::construct_at(end, std::move_if_noexcept(tmp));
+                    header.end = end + 1;
+                    return oldCount;
                 }
-                else
-                {
-                    std::construct_at(end, value);
-                }
+
+                ReallocateKnownList<T>(header, CalculateNextCapacity(oldCount + 1, capacity - begin));
+                end = header.End<T>();
             }
 
-            endVoid = end + 1;
+            std::construct_at(end, value);
+
+            header.end = end + 1;
             return oldCount;
         }
 
         template<typename T>
-        wIndex KnownListAdd(void** listStart, T&& value)
+        wIndex AddToKnownList(ComponentSetup::ListHeader& header, T&& value)
         {
-            void*& endVoid = listStart[EndPtrOffset];
-            T* end = static_cast<T*>(endVoid);
-            const T* const begin = static_cast<T*>(listStart[BeginPtrOffset]);
-            const T* const capacity = static_cast<T*>(listStart[CapacityPtrOffset]);
+            T* end = header.End<T>();
+            const T* const begin = header.Begin<T>();
+            const T* const capacity = header.Capacity<T>();
             const wIndex oldCount = end - begin;
 
             if (end == capacity)
             {
-                ReallocateKnownList<T>(listStart, CalculateNextCapacity(oldCount + 1, capacity - begin));
-                end = static_cast<T*>(endVoid);
+                if (&value >= begin && &value < end)
+                {
+                    T tmp = std::move(value);
+                    ReallocateKnownList<T>(header, CalculateNextCapacity(oldCount + 1, capacity - begin));
+                    end = header.End<T>();
+                    std::construct_at(end, std::move_if_noexcept(tmp));
+                    header.end = end + 1;
+                    return oldCount;
+                }
+
+                ReallocateKnownList<T>(header, CalculateNextCapacity(oldCount + 1, capacity - begin));
+                end = header.End<T>();
             }
 
             std::construct_at(end, std::move_if_noexcept(value));
 
-            endVoid = end + 1;
+            header.end = end + 1;
             return oldCount;
         }
 
         template<typename T, typename... Args>
-        wIndex KnownListEmplace(void** listStart, Args&&... args)
+        wIndex EmplaceKnownList(ComponentSetup::ListHeader& header, Args&&... args)
         {
-            void*& endVoid = listStart[EndPtrOffset];
-            T* end = static_cast<T*>(endVoid);
-            const T* const begin = static_cast<T*>(listStart[BeginPtrOffset]);
-            const T* const capacity = static_cast<T*>(listStart[CapacityPtrOffset]);
+            T* end = header.End<T>();
+            const T* const begin = header.Begin<T>();
+            const T* const capacity = header.Capacity<T>();
             const wIndex oldCount = end - begin;
 
             if (end == capacity)
             {
-                ReallocateKnownList<T>(listStart, CalculateNextCapacity(oldCount + 1, capacity - begin));
-                end = static_cast<T*>(endVoid);
+                ReallocateKnownList<T>(header, CalculateNextCapacity(oldCount + 1, capacity - begin));
+                end = header.End<T>();
             }
 
             std::construct_at(end, std::forward<Args>(args)...);
 
-            endVoid = end + 1;
+            header.end = end + 1;
             return oldCount;
         }
 
         template<typename T>
-        void ReallocateKnownList(void** listStart, wIndex newCapacity)
+        void DestroyKnownList(ComponentSetup::ListHeader& header) noexcept
         {
-            void*& endVoid = listStart[EndPtrOffset];
-            void*& beginVoid = listStart[BeginPtrOffset];
-            const T* const end = static_cast<T*>(endVoid);
-            const T* const begin = static_cast<T*>(beginVoid);
-            const std::size_t oldCount = end - begin;
-
-            T* newKnownList = static_cast<T*>(
-                ::operator new(newCapacity * sizeof(T), std::align_val_t(alignof(T)))
-            );
-
-            if (oldCount)
-            {
-                std::memcpy(newKnownList, beginVoid, oldCount * sizeof(T));
-            }
-
-            if (beginVoid)
-            {
-                ::operator delete(beginVoid, std::align_val_t(alignof(T)));
-            }
-
-            beginVoid = newKnownList;
-            endVoid = newKnownList + oldCount;
-            listStart[CapacityPtrOffset] = newKnownList + newCapacity;
-        }
-
-        template<typename T>
-        void DestroyKnownList(void** listStart)
-        {
-            void*& beginVoid = listStart[BeginPtrOffset];
-            if (beginVoid)
+            if (!ComponentSetup::IsSentinel<T>(header.begin))
             {
                 if constexpr (!std::is_trivially_destructible_v<T>)
                 {
-                    T* const begin = static_cast<T*>(beginVoid);
-                    T* const end = static_cast<T*>(listStart[EndPtrOffset]);
+                    T* const begin = header.Begin<T>();
+                    T* const end = header.End<T>();
                     for (T* element = begin; element != end; ++element)
                     {
                         std::destroy_at(element);
                     }
                 }
-                ::operator delete(beginVoid, std::align_val_t(alignof(T)));
+                ::operator delete(header.begin, std::align_val_t(alignof(T)));
             }
         }
 
         template<typename T>
-        wIndex KnownListCount(void** listStart) const
+        wIndex GetKnownListCount(ComponentSetup::ListHeader& header) const noexcept
         {
-            T* const end = static_cast<T*>(listStart[EndPtrOffset]);
-            T* const begin = static_cast<T*>(listStart[BeginPtrOffset]);
-            return end - begin;
-        }
-
-        template<typename T>
-        static T* EmptySentinel() noexcept
-        {
-            alignas(T) static std::byte raw[sizeof(T)];
-            return reinterpret_cast<T*>(&raw);
+            return header.End<T>() - header.Begin<T>();
         }
 
         void ReallocateScenes(wIndex sceneCapacity);
@@ -265,18 +211,20 @@ namespace wCore
 
         // Component
         // std::string names
-        inline std::size_t GetSceneSizePointers() const noexcept { return 3 * (2 * m_componentSetup.GetComponentTypeCount()); }
-        inline std::size_t GetSceneSizeBytes() const noexcept { return GetSceneSizePointers() * sizeof(void*); }
-        inline std::size_t GetSceneStartPtrIndex(SceneIndex sceneIndex) const noexcept { return (sceneIndex - 1) * GetSceneSizePointers(); }
+        inline std::size_t GetSceneSizeLists() const noexcept { return 2 + m_currentComponentTypeCount; }
+        inline std::size_t GetSceneSizeBytes() const noexcept { return GetSceneSizeLists() * sizeof(ListHeader); }
+        inline std::size_t GetSceneStartListIndex(SceneIndex sceneIndex) const noexcept { return (sceneIndex - 1) * GetSceneSizeLists(); }
 
-        inline std::size_t GetComponentPointerOffset(ComponentTypeIndex componentTypeIndex) const noexcept { return (componentTypeIndex + 1) * 3; }
-        inline std::size_t GetComponentStartPtrIndex(SceneIndex sceneIndex, ComponentTypeIndex componentTypeIndex) const noexcept { return GetSceneStartPtrIndex(sceneIndex) + GetComponentPointerOffset(componentTypeIndex); }
+        inline std::size_t GetComponentListOffset(ComponentTypeIndex componentTypeIndex) const noexcept { return componentTypeIndex + 1; }
+        inline std::size_t GetComponentStartListIndex(SceneIndex sceneIndex, ComponentTypeIndex componentTypeIndex) const noexcept { return GetSceneStartListIndex(sceneIndex) + GetComponentListOffset(componentTypeIndex); }
 
         //inline std::size_t GetComponentListStartPtrIndex(ComponentTypeIndex componentTypeIndex, SceneIndex sceneIndex) const noexcept;
 
         ComponentSetup m_componentSetup;
+        wIndex m_currentComponentTypeCount;
 
-        void** m_componentLists;
+        ListHeader* m_emptyComponentLists;
+        ListHeader* m_componentLists;
         wIndex m_componentListsCapacity;
 
         std::vector<SceneData> m_sceneData;

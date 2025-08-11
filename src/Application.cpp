@@ -19,7 +19,26 @@ namespace wCore
         m_componentSystem.CreateComponent(1, sceneIndex);
         m_componentSystem.CreateComponent(1, sceneIndex);
         m_componentSystem.CreateComponent(1, sceneIndex);
+        m_componentSystem.CreateComponent(1, sceneIndex);
+        m_componentSystem.CreateComponent(1, sceneIndex);
+        m_componentSystem.CreateComponent(1, sceneIndex);
+        m_componentSystem.CreateComponent(1, sceneIndex);
+        m_componentSystem.CreateComponent(1, sceneIndex);
+        m_componentSystem.CreateComponent(1, sceneIndex);
+        m_componentSystem.CreateComponent(1, sceneIndex);
+        m_componentSystem.CreateComponent(1, sceneIndex);
         m_componentSystem.CreateComponent(2, sceneIndex);
+        m_componentSystem.CreateComponent(2, sceneIndex);
+        m_componentSystem.CreateComponent(2, sceneIndex);
+        m_componentSystem.CreateComponent(2, sceneIndex);
+        m_componentSystem.CreateComponent(2, sceneIndex);
+        m_componentSystem.CreateComponent(2, sceneIndex);
+        m_componentSystem.CreateComponent(1, sceneIndex);
+        m_componentSystem.CreateComponent(1, sceneIndex);
+        m_componentSystem.CreateComponent(1, sceneIndex);
+        m_componentSystem.CreateComponent(1, sceneIndex);
+        m_componentSystem.CreateComponent(2, sceneIndex);
+        W_DEBUG_LOG_INFO("All Created");
 
         return Application::RunOutput(0);
     }
