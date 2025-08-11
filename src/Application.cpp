@@ -4,6 +4,7 @@
 namespace wCore
 {
     Application::Application()
+        : m_componentSystem(*this)
     {
     }
 

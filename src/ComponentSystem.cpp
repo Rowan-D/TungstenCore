@@ -7,12 +7,11 @@ namespace wCore
 {
     static constexpr std::uintptr_t InvalidComponentListTrue = static_cast<std::uintptr_t>(1);
 
-    ComponentSystem::ComponentSystem()
-        : m_componentSetup(), m_currentComponentTypeCount(0),
+    ComponentSystem::ComponentSystem(Application& app)
+        : m_app(app), m_componentSetup(), m_currentComponentTypeCount(0),
         m_emptyComponentLists(nullptr), m_componentLists(nullptr), m_componentListsCapacity(0),
         m_sceneData(), m_sceneFreeList()
     {
-
     }
 
     ComponentSystem::~ComponentSystem()
@@ -21,15 +20,15 @@ namespace wCore
         {
             for (SceneIndex sceneIndex = SceneIndexStart; sceneIndex <= m_sceneData.size(); ++sceneIndex)
             {
-                const std::size_t sceneStartPtrIndex = GetSceneStartListIndex(sceneIndex);
-                if (m_componentLists[sceneStartPtrIndex].begin)
+                const std::size_t sceneStartListIndex = GetSceneStartListIndex(sceneIndex);
+                if (m_componentLists[sceneStartListIndex].begin)
                 {
-                    DeleteSceneContent(sceneStartPtrIndex);
+                    DeleteSceneContent(sceneStartListIndex);
                 }
             }
             W_ASSERT(m_emptyComponentLists, "m_emptyComponentList should not be nullptr if m_componentLists has been created!");
-            ::operator delete(m_emptyComponentLists, std::align_val_t(alignof(ListHeader)));
-            ::operator delete(m_componentLists, std::align_val_t(alignof(ListHeader)));
+            ::operator delete(m_emptyComponentLists, std::align_val_t(alignof(ComponentSetup::ListHeader)));
+            ::operator delete(m_componentLists, std::align_val_t(alignof(ComponentSetup::ListHeader)));
         }
     }
 
@@ -49,7 +48,7 @@ namespace wCore
         {
             if (m_sceneData.size() == m_componentListsCapacity)
             {
-                ReallocateScenes(CalculateNextCapacity(m_sceneData.size() + 1, m_componentListsCapacity));
+                ReallocateScenes(ComponentSetup::CalculateNextCapacity(m_sceneData.size() + 1, m_componentListsCapacity));
             }
 
             const std::size_t sceneStartListIndex = m_sceneData.size() * sceneSizeLists;
@@ -65,7 +64,7 @@ namespace wCore
         // Reset the memory to empty sentinels
         const std::size_t sceneStartListIndex = GetSceneStartListIndex(sceneIndex);
         W_ASSERT(m_componentLists[sceneStartListIndex].begin, "A Free/Invalid ComponentList Should Have the first pointer be false (Set to nullptr).");
-        std::memcpy(m_componentLists + sceneStartListIndex, m_emptyComponentLists, sceneSizeLists * sizeof(ListHeader));
+        std::memcpy(m_componentLists + sceneStartListIndex, m_emptyComponentLists, sceneSizeLists * sizeof(ComponentSetup::ListHeader));
 
         m_sceneData[sceneIndex - 1] = SceneData{};
 
@@ -107,27 +106,9 @@ namespace wCore
 
     ComponentIndex ComponentSystem::CreateComponent(ComponentTypeIndex componentTypeIndex, SceneIndex sceneIndex)
     {
-        const std::size_t sceneStartPtrIndex = GetSceneStartPtrIndex(sceneIndex);
-        const std::size_t componentListStartPtrIndex = sceneStartPtrIndex + GetComponentPointerOffset(componentTypeIndex);
-        const ComponentSetup::ComponentType type = m_componentSetup.m_types[componentTypeIndex - 1];
-
-        void*& componentListEndVoid = m_componentLists[componentListStartPtrIndex + EndPtrOffset];
-        const std::byte* componentListEnd = static_cast<std::byte*>(componentListEndVoid);
-        const std::byte* const componentListBegin = static_cast<std::byte*>(m_componentLists[componentListStartPtrIndex + BeginPtrOffset]);
-        const std::byte* const componentListCapacity = static_cast<std::byte*>(m_componentLists[componentListStartPtrIndex + CapacityPtrOffset]);
-        const wIndex listIndex = (componentListEnd - componentListBegin) / type.size;
-
-        if (componentListEnd == componentListCapacity)
-        {
-            ReallocateComponentList(componentListStartPtrIndex, componentTypeIndex, CalculateNextCapacity(listIndex + 1, (componentListCapacity - componentListBegin) / type.size));
-            componentListEnd = static_cast<std::byte*>(componentListEndVoid);
-        }
-
-        type.constructor(componentListEndVoid);
-
-        componentListEndVoid = const_cast<void*>(static_cast<const void*>(componentListEnd + type.size));
-
-        return EmplaceKnownList<Component>(m_componentLists + sceneStartPtrIndex + ComponentListPtrOffset, 0, listIndex);
+        const std::size_t sceneStartListIndex = GetSceneStartListIndex(sceneIndex);
+        const wIndex listIndex = m_componentSetup.m_types[componentTypeIndex - 1].create(m_componentLists[sceneStartListIndex + GetComponentListOffset(componentTypeIndex)], m_app);
+        return ComponentSetup::EmplaceKnownList<Component>(m_componentLists[sceneStartListIndex + ComponentListOffset], 0, listIndex);
     }
 
     void ComponentSystem::ReallocateScenes(wIndex newCapacity)
@@ -146,7 +127,7 @@ namespace wCore
                 std::memcpy(newComponentLists, m_componentLists, m_sceneData.size() * sceneSizeBytes);
             }
 
-            ::operator delete(m_componentLists, std::align_val_t(alignof(ListHeader*)));
+            ::operator delete(m_componentLists, std::align_val_t(alignof(ComponentSetup::ListHeader*)));
 
             m_componentLists = newComponentLists;
         }
@@ -179,58 +160,22 @@ namespace wCore
         }
     }
 
-    void ComponentSystem::DeleteSceneContent(std::size_t sceneStartPtrIndex)
+    void ComponentSystem::DeleteSceneContent(std::size_t sceneStartListIndex)
     {
-        DestroyKnownList<Component>(m_componentLists[sceneStartPtrIndex + ComponentListOffset]);
-        DestroyKnownList<std::string>(m_componentLists[sceneStartPtrIndex + ComponentNameListOffset]);
-        for (wIndex componentTypeIndex = wCore::ComponentTypeIndexStart; componentTypeIndex <= m_currentComponentTypeCount; ++componentTypeIndex)
+        DestroyKnownList<Component>(m_componentLists[sceneStartListIndex + ComponentListOffset]);
+        DestroyKnownList<std::string>(m_componentLists[sceneStartListIndex + ComponentNameListOffset]);
+        for (wIndex componentTypeIndex = ComponentTypeIndexStart; componentTypeIndex <= m_currentComponentTypeCount; ++componentTypeIndex)
         {
-            DestroyComponentList(sceneStartPtrIndex, componentTypeIndex);
+            DestroyComponentList(sceneStartListIndex, componentTypeIndex);
         }
     }
 
-    void ComponentSystem::ReallocateComponentList(std::size_t componentListStartPtrIndex, ComponentTypeIndex componentTypeIndex, wIndex newCapacity)
+    void ComponentSystem::DestroyComponentList(std::size_t sceneStartListIndex, ComponentTypeIndex componentTypeIndex)
     {
-        const ComponentSetup::ComponentType type = m_componentSetup.m_types[componentTypeIndex - 1];
-
-        ComponentSetup::ListHeader& header = m_componentLists[componentListStartPtrIndex];
-        const std::byte* componentListEnd = header.End<std::byte>();
-        const std::byte* componentListBegin = header.End<std::byte>();
-        const std::size_t oldSizeBytes = componentListEnd - componentListBegin;
-
-        std::byte* newComponentList = static_cast<std::byte*>(
-            ::operator new(newCapacity * type.size, std::align_val_t(type.alignment))
-        );
-
-        if (oldSizeBytes)
-        {
-            std::memcpy(newComponentList, header.begin, oldSizeBytes);
-        }
-
+        ComponentSetup::ListHeader& header = m_componentLists[sceneStartListIndex + GetComponentListOffset(componentTypeIndex)];
         if (header.begin != m_componentSetup.m_emptySentinals[componentTypeIndex - 1])
         {
-            ::operator delete(header.begin, std::align_val_t(type.alignment));
-        }
-
-        header.begin = newComponentList;
-        header.end = newComponentList + oldSizeBytes;
-        header.capacity = newComponentList + newCapacity * type.size;
-    }
-
-    void ComponentSystem::DestroyComponentList(std::size_t sceneStartPtrIndex, ComponentTypeIndex componentTypeIndex)
-    {
-        const std::size_t componentListStartPtrIndex = sceneStartPtrIndex + GetComponentPointerOffset(componentTypeIndex);
-        void*& componentListBeginVoid = m_componentLists[componentListStartPtrIndex + BeginPtrOffset];
-        if (componentListBeginVoid != m_componentSetup.m_emptySentinals[componentTypeIndex - 1])
-        {
-            std::byte* const componentListBegin = static_cast<std::byte*>(componentListBeginVoid);
-            std::byte* const componentListEnd = static_cast<std::byte*>(m_componentLists[componentListStartPtrIndex + EndPtrOffset]);
-            const ComponentSetup::ComponentType type = m_componentSetup.m_types[componentTypeIndex - 1];
-            for (std::byte* element = componentListBegin; element != componentListEnd; element += type.size)
-            {
-                type.destructor(element);
-            }
-            ::operator delete(componentListBeginVoid, std::align_val_t(type.alignment));
+            m_componentSetup.m_types[componentTypeIndex - 1].destroy(header);
         }
     }
 }

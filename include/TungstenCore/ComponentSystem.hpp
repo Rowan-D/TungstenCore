@@ -17,7 +17,7 @@ namespace wCore
     class ComponentSystem
     {
     public:
-        ComponentSystem();
+        ComponentSystem(Application& app);
         ~ComponentSystem();
 
         ComponentSystem(const ComponentSetup&) = delete;
@@ -62,8 +62,6 @@ namespace wCore
         inline const ComponentSetup& GetComponentSetup() const { return m_componentSetup; }
 
     private:
-        static constexpr wIndex InitialCapacity = 8;
-
         static constexpr std::size_t ComponentListOffset = 0;
         static constexpr std::size_t ComponentNameListOffset = 1;
         static constexpr std::size_t KnownListCount = 2;
@@ -82,7 +80,7 @@ namespace wCore
         };
 
         template<typename T>
-        void ReserveKnownList(ComponentSetup::ListHeader& header, wIndex num)
+        static void ReserveKnownList(ComponentSetup::ListHeader& header, wIndex num)
         {
             if (num > header.Capacity<T>() - header.Begin<T>())
             {
@@ -91,7 +89,7 @@ namespace wCore
         }
 
         template<typename T>
-        wIndex AddToKnownList(ComponentSetup::ListHeader& header, T& value)
+        static wIndex AddToKnownList(ComponentSetup::ListHeader& header, T& value)
         {
             T* end = header.End<T>();
             const T* const begin = header.Begin<T>();
@@ -121,7 +119,7 @@ namespace wCore
         }
 
         template<typename T>
-        wIndex AddToKnownList(ComponentSetup::ListHeader& header, T&& value)
+        static wIndex AddToKnownList(ComponentSetup::ListHeader& header, T&& value)
         {
             T* end = header.End<T>();
             const T* const begin = header.Begin<T>();
@@ -150,46 +148,17 @@ namespace wCore
             return oldCount;
         }
 
-        template<typename T, typename... Args>
-        wIndex EmplaceKnownList(ComponentSetup::ListHeader& header, Args&&... args)
-        {
-            T* end = header.End<T>();
-            const T* const begin = header.Begin<T>();
-            const T* const capacity = header.Capacity<T>();
-            const wIndex oldCount = end - begin;
-
-            if (end == capacity)
-            {
-                ReallocateKnownList<T>(header, CalculateNextCapacity(oldCount + 1, capacity - begin));
-                end = header.End<T>();
-            }
-
-            std::construct_at(end, std::forward<Args>(args)...);
-
-            header.end = end + 1;
-            return oldCount;
-        }
-
         template<typename T>
-        void DestroyKnownList(ComponentSetup::ListHeader& header) noexcept
+        static void DestroyKnownList(ComponentSetup::ListHeader& header) noexcept
         {
             if (!ComponentSetup::IsSentinel<T>(header.begin))
             {
-                if constexpr (!std::is_trivially_destructible_v<T>)
-                {
-                    T* const begin = header.Begin<T>();
-                    T* const end = header.End<T>();
-                    for (T* element = begin; element != end; ++element)
-                    {
-                        std::destroy_at(element);
-                    }
-                }
-                ::operator delete(header.begin, std::align_val_t(alignof(T)));
+                ComponentSetup::DestroyKnownListUnchecked<T>(header);
             }
         }
 
         template<typename T>
-        wIndex GetKnownListCount(ComponentSetup::ListHeader& header) const noexcept
+        static wIndex GetKnownListCount(ComponentSetup::ListHeader& header) noexcept
         {
             return header.End<T>() - header.Begin<T>();
         }
@@ -197,22 +166,13 @@ namespace wCore
         void ReallocateScenes(wIndex sceneCapacity);
         void DeleteSceneContent(std::size_t sceneStartPtrIndex);
 
-        void ReallocateComponentList(std::size_t componentListStartPtrIndex, ComponentTypeIndex componentTypeIndex, wIndex newCapacity);
         void DestroyComponentList(std::size_t sceneStartPtrIndex, ComponentTypeIndex componentTypeIndex);
 
-        static inline constexpr wIndex CalculateNextCapacity(wIndex requested, wIndex current) noexcept
-        {
-            if (!current)
-            {
-                return std::max(InitialCapacity, requested);
-            }
-            return std::max(current * 2, requested);
-        }
 
         // Component
         // std::string names
         inline std::size_t GetSceneSizeLists() const noexcept { return 2 + m_currentComponentTypeCount; }
-        inline std::size_t GetSceneSizeBytes() const noexcept { return GetSceneSizeLists() * sizeof(ListHeader); }
+        inline std::size_t GetSceneSizeBytes() const noexcept { return GetSceneSizeLists() * sizeof(ComponentSetup::ListHeader); }
         inline std::size_t GetSceneStartListIndex(SceneIndex sceneIndex) const noexcept { return (sceneIndex - 1) * GetSceneSizeLists(); }
 
         inline std::size_t GetComponentListOffset(ComponentTypeIndex componentTypeIndex) const noexcept { return componentTypeIndex + 1; }
@@ -220,11 +180,12 @@ namespace wCore
 
         //inline std::size_t GetComponentListStartPtrIndex(ComponentTypeIndex componentTypeIndex, SceneIndex sceneIndex) const noexcept;
 
+        Application& m_app;
         ComponentSetup m_componentSetup;
         wIndex m_currentComponentTypeCount;
 
-        ListHeader* m_emptyComponentLists;
-        ListHeader* m_componentLists;
+        ComponentSetup::ListHeader* m_emptyComponentLists;
+        ComponentSetup::ListHeader* m_componentLists;
         wIndex m_componentListsCapacity;
 
         std::vector<SceneData> m_sceneData;

@@ -8,6 +8,8 @@
 
 namespace wCore
 {
+    class Application;
+
     using ComponentTypeIndex = wIndex;
     inline constexpr ComponentTypeIndex InvalidComponentType = 0;
     inline constexpr ComponentTypeIndex ComponentTypeIndexStart = 1;
@@ -26,7 +28,7 @@ namespace wCore
             W_ASSERT(!StaticComponentID<T>::Get(), "Component: {} Already added to ComponentSetup!", typeName);
             m_names.emplace_back(typeName);
             m_emptySentinals.emplace_back(EmptySentinel<T>());
-            m_types.emplace_back(sizeof(T), alignof(T), &ReallocateKnownList<T> &ConstructInPlace<T>, &DestroyInPlace<T>);
+            m_types.emplace_back(sizeof(T), alignof(T), &ReallocateKnownList<T>, &CreateComponent<T>, &DestroyKnownListUnchecked<T>);
             StaticComponentID<T>::Set(m_names.size());
         }
 
@@ -48,6 +50,16 @@ namespace wCore
         inline wIndex GetComponentTypeCount() const noexcept { return m_names.size(); }
 
     private:
+        static constexpr wIndex InitialCapacity = 8;
+        static inline constexpr wIndex CalculateNextCapacity(wIndex requested, wIndex current) noexcept
+        {
+            if (!current)
+            {
+                return std::max(InitialCapacity, requested);
+            }
+            return std::max(current * 2, requested);
+        }
+
         struct ListHeader
         {
             void* begin{};
@@ -72,24 +84,53 @@ namespace wCore
         };
 
         using ComponentReallocateFn = void(*)(ListHeader& header, wIndex newCapacity);
-
-        // TODO: Remove if unnesesseary
-        using ComponentConstructorFn = void(*)(void* destination);
-        using ComponentDestructorFn = void(*)(void* destination);
+        using ComponentCreateFn = wIndex(*)(ListHeader& header, Application& app);
+        using ComponentDestroyFn = void(*)(ListHeader& header);
 
         struct ComponentType
         {
-            ComponentType(std::size_t a_size, std::size_t a_alignment, ComponentReallocateFn a_reallocate, ComponentConstructorFn a_constructor, ComponentDestructorFn a_destructor)
-                : size(a_size), alignment(a_alignment), reallocate(a_reallocate), constructor(a_constructor), destructor(a_destructor) {}
+            ComponentType(std::size_t a_size, std::size_t a_alignment, ComponentReallocateFn a_reallocate, ComponentCreateFn a_create, ComponentDestroyFn a_destroy)
+                : size(a_size), alignment(a_alignment), reallocate(a_reallocate), create(a_create), destroy(a_destroy) {}
 
             std::size_t size;
             std::size_t alignment;
             ComponentReallocateFn reallocate;
-
-            // TODO: Remove if unnesesseary
-            ComponentConstructorFn constructor;
-            ComponentDestructorFn destructor;
+            ComponentCreateFn create;
+            ComponentDestroyFn destroy;
         };
+
+        template<typename T>
+        static wIndex CreateComponent(ListHeader& header, Application& app)
+        {
+            if constexpr (std::is_constructible_v<T, Application&>)
+            {
+                return EmplaceKnownList<T>(header, app);
+            }
+            else
+            {
+                return EmplaceKnownList<T>(header);
+            }
+        }
+
+        template<typename T, typename... Args>
+        static wIndex EmplaceKnownList(ComponentSetup::ListHeader& header, Args&&... args)
+        {
+            T* end = header.End<T>();
+            const T* const begin = header.Begin<T>();
+            const T* const capacity = header.Capacity<T>();
+            const wIndex oldCount = end - begin;
+
+            if (end == capacity)
+            {
+                ReallocateKnownList<T>(header, CalculateNextCapacity(oldCount + 1, capacity - begin));
+                end = header.End<T>();
+            }
+
+            std::construct_at(end, std::forward<Args>(args)...);
+
+            header.end = end + 1;
+            return oldCount;
+        }
 
         template<typename T>
         static void ReallocateKnownList(ListHeader& header, wIndex newCapacity)
@@ -154,7 +195,7 @@ namespace wCore
 #endif
             }
 
-            if (!ComponentSetup::IsSentinel(begin))
+            if (!IsSentinel(begin))
             {
                 ::operator delete(header.begin, std::align_val_t(alignof(T)));
             }
@@ -164,16 +205,21 @@ namespace wCore
             header.capacity = newMemory + newCapacity;
         }
 
-        // TODO: Remove if unnesessary
         template<typename T>
-        static void ConstructInPlace(void* dest) {
-            std::construct_at(static_cast<T*>(dest));  // default-construct T at dest
+        static void DestroyKnownListUnchecked(ListHeader& header) noexcept
+        {
+            if constexpr (!std::is_trivially_destructible_v<T>)
+            {
+                T* const begin = header.Begin<T>();
+                T* const end = header.End<T>();
+                for (T* element = begin; element != end; ++element)
+                {
+                    std::destroy_at(element);
+                }
+            }
+            ::operator delete(header.begin, std::align_val_t(alignof(T)));
         }
 
-        template<typename T>
-        static void DestroyInPlace(void* ptr) {
-            std::destroy_at(static_cast<T*>(ptr));  // calls ~T() if non-trivial
-        }
 
         template<typename T>
         class StaticComponentID
