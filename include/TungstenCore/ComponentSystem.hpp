@@ -3,6 +3,7 @@
 
 #include "TungstenCore/ComponentSetup.hpp"
 #include "TungstenCore/Scene.hpp"
+#include <span>
 
 namespace wCore
 {
@@ -23,43 +24,79 @@ namespace wCore
         ComponentSystem(const ComponentSetup&) = delete;
         ComponentSystem& operator=(const ComponentSetup&) = delete;
 
-        void ReserveScenes(wIndex sceneCapacity);
-        [[nodiscard]] SceneIndex CreateScene();
+        // Scenes
+        void ReserveScenes(wIndex minCapacity);
+        inline void ReserveSceneFreeList(wIndex minCapacity) { m_sceneFreeList.reserve(minCapacity); }
+
+        [[nodiscard]] inline SceneIndex CreateScene() { return CreateScene(""); }
+        [[nodiscard]] SceneIndex CreateScene(std::string_view name);
         void DestroyScene(SceneIndex sceneIndex);
-        inline bool SceneExists(SceneIndex sceneIndex) { return m_componentLists[GetSceneStartListIndex(sceneIndex)].begin; }
+        [[nodiscard]] inline bool SceneExists(SceneIndex sceneIndex) { return m_componentLists[GetSceneStartListIndex(sceneIndex)].begin; }
+
         //inline const Scene& GetScene(uint32_t sceneIndex) const { return m_scenes[sceneIndex - 1]; }
-        wIndex GetComponentCount(uint32_t sceneIndex) const;
 
-        // TODO:
-        inline wIndex SceneCount() const noexcept { return m_sceneData.size(); }
+        [[nodiscard]] inline const std::string& GetSceneName(SceneIndex sceneIndex) const noexcept { return m_sceneData[sceneIndex - 1].name; }
+        inline void SetSceneName(SceneIndex sceneIndex, std::string_view name) { m_sceneData[sceneIndex - 1].name = name; }
+        inline void SetSceneName(SceneIndex sceneIndex, std::string&& name) noexcept { m_sceneData[sceneIndex - 1].name = std::move(name); }
 
-        void ReserveComponent(ComponentTypeIndex componentTypeIndex, SceneIndex sceneIndex, wIndex componentCapacity);
-        ComponentIndex CreateComponent(ComponentTypeIndex componentTypeIndex, SceneIndex sceneIndex);
+        [[nodiscard]] inline wIndex GetSceneCount() const noexcept { return m_sceneData.size() - m_sceneFreeList.size(); }
+        [[nodiscard]] inline wIndex GetSceneSlotCount() const noexcept { return m_sceneData.size(); }
+        [[nodiscard]] inline wIndex GetSceneSlotCapacity() const noexcept { return m_sceneData.capacity(); }
+        [[nodiscard]] inline wIndex GetSceneFreeListCount() const noexcept { return m_sceneFreeList.size(); }
+        [[nodiscard]] inline wIndex GetSceneFreeListCapacity() const noexcept { return m_sceneFreeList.capacity(); }
 
-        /*template<typename T>
-        void ReserveComponent(wIndex sceneIndex, wIndex componentCapacity)
+        // Components
+        inline void ReserveComponents(wIndex sceneIndex, wIndex minCapacity) { ReserveKnownList<Component>(m_componentLists[GetSceneStartListIndex(sceneIndex) + ComponentListOffset], minCapacity); }
+
+        template<typename T>
+        inline void ReserveComponents(wIndex sceneIndex, wIndex minCapacity) { ReserveKnownList<T>(GetComponentListHeader<T>(sceneIndex), minCapacity); }
+
+        template<typename T>
+        [[nodiscard]] ComponentIndex CreateComponent(wIndex sceneIndex)
         {
-            KnownListReserve<T>(m_componentSetup.GetComponentTypeIndex<T>());
+            const std::size_t sceneStartListIndex = GetSceneStartListIndex(sceneIndex);
+            const wIndex listIndex = ComponentSetup::CreateComponent<T>(m_componentLists[sceneStartListIndex + GetComponentListOffset<T>()], m_app);
+            return ComponentSetup::EmplaceKnownList<Component>(m_componentLists[sceneStartListIndex + ComponentListOffset], 0, listIndex) + 1;
         }
 
-        /*template<typename T>
-        ComponentIndex CreateComponent(wIndex sceneIndex, T& component)
+        template<typename T>
+        [[nodiscard]] T& GetComponent(wIndex sceneIndex, ComponentIndex componentIndex)
         {
-            const std::size_t sceneSizePointers = GetSceneSizePointers();
-            const wIndex componentID = m_componentSetup.GetComponentTypeIndex<T>();
-            m_componentLists[sceneIndex * sceneSizePointers + (componentID + 1) * 3];
+            const std::size_t sceneStartListIndex = GetSceneStartListIndex(sceneIndex);
+            const wIndex listIndex = IndexKnownList<Component>(m_componentLists[sceneStartListIndex + ComponentListOffset], componentIndex - 1);
+            return IndexKnownList<T>(m_componentLists[sceneStartListIndex + GetComponentListOffset<T>()], listIndex);
         }
 
         template<typename T>
-        T& GetComponent(wIndex sceneIndex, wIndex componentIndex);
+        [[nodiscard]] const T& GetComponent(wIndex sceneIndex, ComponentIndex componentIndex) const
+        {
+            const std::size_t sceneStartListIndex = GetSceneStartListIndex(sceneIndex);
+            const wIndex listIndex = IndexKnownList<Component>(m_componentLists[sceneStartListIndex + ComponentListOffset], componentIndex - 1);
+            return IndexKnownList<T>(m_componentLists[sceneStartListIndex + GetComponentListOffset<T>()], listIndex);
+        }
+
+        [[nodiscard]] inline wIndex GetComponentCount(uint32_t sceneIndex) const { return GetKnownListCount<Component>(m_componentLists[GetSceneStartListIndex(sceneIndex) + ComponentListOffset]); }
+        [[nodiscard]] inline wIndex GetComponentCapacity(uint32_t sceneIndex) const { return GetKnownListCapacity<Component>(m_componentLists[GetSceneStartListIndex(sceneIndex) + ComponentListOffset]); }
+
+        [[nodiscard]] inline wIndex GetComponentNameCount(uint32_t sceneIndex) const { return GetKnownListCount<std::string>(m_componentLists[GetSceneStartListIndex(sceneIndex) + ComponentListOffset]); }
+        [[nodiscard]] inline wIndex GetComponentNameCapacity(uint32_t sceneIndex) const { return GetKnownListCapacity<std::string>(m_componentLists[GetSceneStartListIndex(sceneIndex) + ComponentListOffset]); }
 
         template<typename T>
-        T& GetComponentCount(wIndex sceneIndex, wIndex componentIndex);
-        template<typename T>
-        T& GetComponentCapacity(wIndex sceneIndex, wIndex componentIndex);*/
+        [[nodiscard]] inline wIndex GetComponentCount(wIndex sceneIndex) const { return GetKnownListCount<T>(GetComponentListHeader<T>(sceneIndex)); }
 
-        inline ComponentSetup& GetComponentSetup() { return m_componentSetup; };
-        inline const ComponentSetup& GetComponentSetup() const { return m_componentSetup; }
+        template<typename T>
+        [[nodiscard]] inline wIndex GetComponentCapacity(wIndex sceneIndex) const { return GetKnownListCapacity<T>(GetComponentListHeader<T>(sceneIndex)); }
+
+        // API
+        [[nodiscard]] inline ComponentSetup& GetComponentSetup() { return m_componentSetup; };
+        [[nodiscard]] inline const ComponentSetup& GetComponentSetup() const { return m_componentSetup; }
+
+        // Internal
+        void ReserveComponents(ComponentTypeIndex componentTypeIndex, SceneIndex sceneIndex, wIndex componentCapacity);
+        [[nodiscard]] ComponentIndex CreateComponent(ComponentTypeIndex componentTypeIndex, SceneIndex sceneIndex);
+
+        [[nodiscard]] inline wIndex GetComponentCount(ComponentTypeIndex componentTypeIndex, wIndex sceneIndex) const;
+        [[nodiscard]] inline wIndex GetComponentCapacity(ComponentTypeIndex componentTypeIndex, wIndex sceneIndex) const;
 
     private:
         static constexpr std::size_t ComponentListOffset = 0;
@@ -76,7 +113,9 @@ namespace wCore
 
         struct SceneData
         {
-            wIndex nameIndex;
+            SceneData(std::string_view a_name) : name(a_name) {}
+
+            std::string name;
         };
 
         template<typename T>
@@ -84,7 +123,7 @@ namespace wCore
         {
             if (num > header.Capacity<T>() - header.Begin<T>())
             {
-                ReallocateKnownList<T>(header, num);
+                ComponentSetup::ReallocateKnownList<T>(header, num);
             }
         }
 
@@ -149,7 +188,7 @@ namespace wCore
         }
 
         template<typename T>
-        static void DestroyKnownList(ComponentSetup::ListHeader& header) noexcept
+        static void DestroyKnownList(ComponentSetup::ListHeader& header) noexcept(std::is_nothrow_destructible_v<T>) noexcept
         {
             if (!ComponentSetup::IsSentinel<T>(header.begin))
             {
@@ -158,27 +197,56 @@ namespace wCore
         }
 
         template<typename T>
-        static wIndex GetKnownListCount(ComponentSetup::ListHeader& header) noexcept
-        {
-            return header.End<T>() - header.Begin<T>();
-        }
+        [[nodiscard]] inline static wIndex GetKnownListCount(ComponentSetup::ListHeader& header) noexcept { return header.End<T>() - header.Begin<T>(); }
+
+        template<typename T>
+        [[nodiscard]] inline static wIndex GetKnownListCapacity(ComponentSetup::ListHeader& header) noexcept { return header.Capacity<T>() - header.Begin<T>(); }
+
+        template<typename T>
+        [[nodiscard]] inline static T& IndexKnownList(ComponentSetup::ListHeader& header, wIndex index) noexcept { return header.Begin<T>()[index]; }
+
+        template<typename T>
+        [[nodiscard]] inline static const T& IndexKnownList(const ComponentSetup::ListHeader& header, wIndex index) noexcept { return header.Begin<T>()[index]; }
+
+        template<typename T>
+        [[nodiscard]] inline static T& KnownListAt(ComponentSetup::ListHeader& header, wIndex index) { W_ASSERT(index < GetKnownListCount<T>(header), "KnownList Index {} out of Range! KnownList Count: {}", index, GetKnownListCount<T>(header)); return Index<T>(header, index); }
+
+        template<typename T>
+        [[nodiscard]] inline static const T& KnownListAt(const ComponentSetup::ListHeader& header, wIndex index) { W_ASSERT(index < GetKnownListCount<T>(header), "KnownList Index {} out of Range! KnownList Count: {}", index, GetKnownListCount<T>(header)); return Index<T>(header, index); }
+
+        template<typename T>
+        [[nodiscard]] inline static std::span<T> GetSpanFromKnownList(ComponentSetup::ListHeader& header) noexcept { return { header.Begin<T>(), header.End<T>() }; }
+
+        template<typename T>
+        [[nodiscard]] inline static std::span<const T> GetSpanFromKnownList(const ComponentSetup::ListHeader& header) noexcept { return { header.Begin<T>(), header.End<T>() }; }
 
         void ReallocateScenes(wIndex sceneCapacity);
         void DeleteSceneContent(std::size_t sceneStartPtrIndex);
 
         void DestroyComponentList(std::size_t sceneStartPtrIndex, ComponentTypeIndex componentTypeIndex);
 
-
         // Component
         // std::string names
-        inline std::size_t GetSceneSizeLists() const noexcept { return 2 + m_currentComponentTypeCount; }
-        inline std::size_t GetSceneSizeBytes() const noexcept { return GetSceneSizeLists() * sizeof(ComponentSetup::ListHeader); }
-        inline std::size_t GetSceneStartListIndex(SceneIndex sceneIndex) const noexcept { return (sceneIndex - 1) * GetSceneSizeLists(); }
+        [[nodiscard]] inline std::size_t GetSceneSizeLists() const noexcept { return 2 + m_currentComponentTypeCount; }
+        [[nodiscard]] inline std::size_t GetSceneSizeBytes() const noexcept { return GetSceneSizeLists() * sizeof(ComponentSetup::ListHeader); }
+        [[nodiscard]] inline std::size_t GetSceneStartListIndex(SceneIndex sceneIndex) const noexcept { return (sceneIndex - 1) * GetSceneSizeLists(); }
 
-        inline std::size_t GetComponentListOffset(ComponentTypeIndex componentTypeIndex) const noexcept { return componentTypeIndex + 1; }
-        inline std::size_t GetComponentStartListIndex(SceneIndex sceneIndex, ComponentTypeIndex componentTypeIndex) const noexcept { return GetSceneStartListIndex(sceneIndex) + GetComponentListOffset(componentTypeIndex); }
+        [[nodiscard]] static constexpr std::size_t GetComponentListOffset(ComponentTypeIndex componentTypeIndex) noexcept { return componentTypeIndex + 1; }
+        [[nodiscard]] inline std::size_t GetComponentListIndex(SceneIndex sceneIndex, ComponentTypeIndex componentTypeIndex) const noexcept { return GetSceneStartListIndex(sceneIndex) + GetComponentListOffset(componentTypeIndex); }
+        [[nodiscard]] inline ComponentSetup::ListHeader& GetComponentListHeader(SceneIndex sceneIndex, ComponentTypeIndex componentTypeIndex) noexcept { return m_componentLists[GetComponentListIndex(sceneIndex, componentTypeIndex)]; }
+        [[nodiscard]] inline const ComponentSetup::ListHeader& GetComponentListHeader(SceneIndex sceneIndex, ComponentTypeIndex componentTypeIndex) const noexcept { return m_componentLists[GetComponentListIndex(sceneIndex, componentTypeIndex)]; }
 
-        //inline std::size_t GetComponentListStartPtrIndex(ComponentTypeIndex componentTypeIndex, SceneIndex sceneIndex) const noexcept;
+        template<typename T>
+        [[nodiscard]] inline std::size_t GetComponentListOffset() const noexcept { return GetComponentListOffset(m_componentSetup.GetComponentTypeIndex<T>()); }
+
+        template<typename T>
+        [[nodiscard]] inline std::size_t GetComponentListIndex(SceneIndex sceneIndex) const noexcept { return GetSceneStartListIndex(sceneIndex) + GetComponentListOffset<T>(); }
+
+        template<typename T>
+        [[nodiscard]] inline ComponentSetup::ListHeader& GetComponentListHeader(SceneIndex sceneIndex) noexcept { return m_componentLists[GetComponentListIndex<T>(sceneIndex)]; }
+
+        template<typename T>
+        [[nodiscard]] inline const ComponentSetup::ListHeader& GetComponentListHeader(SceneIndex sceneIndex) const noexcept { return m_componentLists[GetComponentListIndex<T>(sceneIndex)]; }
 
         Application& m_app;
         ComponentSetup m_componentSetup;

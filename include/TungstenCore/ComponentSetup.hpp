@@ -25,6 +25,7 @@ namespace wCore
         template<typename T>
         void Add(std::string_view typeName)
         {
+            static_assert(std::is_nothrow_destructible_v<T>, "Components must be nothrow-destructible");
             W_ASSERT(!StaticComponentID<T>::Get(), "Component: {} Already added to ComponentSetup!", typeName);
             m_names.emplace_back(typeName);
             m_emptySentinals.emplace_back(EmptySentinel<T>());
@@ -32,21 +33,14 @@ namespace wCore
             StaticComponentID<T>::Set(m_names.size());
         }
 
+        // internal
         template<typename T>
-        ComponentTypeIndex GetComponentTypeIndex() const
-        {
-            W_ASSERT(StaticComponentID<T>::Get(), "Type: {} not added to ComponentSetup", wUtils::DebugGetTypeName<T>());
-            return StaticComponentID<T>::Get();
-        }
+        inline ComponentTypeIndex GetComponentTypeIndex() const noexcept { W_ASSERT(StaticComponentID<T>::Get(), "Type: {} not added to ComponentSetup", wUtils::DebugGetTypeName<T>()); return StaticComponentID<T>::Get(); }
 
         template<typename T>
-        std::string_view GetComponentTypeName() const
-        {
-            W_ASSERT(GetComponentTypeIndex<T>(), "Type: {} not added to ComponentSetup", wUtils::DebugGetTypeName<T>());
-            return GetComponentTypeNameFromTypeIndex(StaticComponentID<T>::Get());
-        }
+        inline std::string_view GetComponentTypeName() const noexcept { W_ASSERT(GetComponentTypeIndex<T>(), "Type: {} not added to ComponentSetup", wUtils::DebugGetTypeName<T>()); return GetComponentTypeNameFromTypeIndex(StaticComponentID<T>::Get()); }
 
-        inline std::string_view GetComponentTypeNameFromTypeIndex(ComponentTypeIndex componentTypeIndex) const { W_ASSERT(componentTypeIndex != InvalidComponentType, "ComponentTypeIndex {} is Invalid", InvalidComponentType); W_ASSERT(componentTypeIndex <= m_names.size(), "ComponentTypeIndex: {} out of Range! Component Type Count: {}", componentTypeIndex, m_names.size()); return m_names[componentTypeIndex - 1]; }
+        inline std::string_view GetComponentTypeNameFromTypeIndex(ComponentTypeIndex componentTypeIndex) const noexcept { W_ASSERT(componentTypeIndex != InvalidComponentType, "ComponentTypeIndex {} is Invalid", InvalidComponentType); W_ASSERT(componentTypeIndex <= m_names.size(), "ComponentTypeIndex: {} out of Range! Component Type Count: {}", componentTypeIndex, m_names.size()); return m_names[componentTypeIndex - 1]; }
         inline wIndex GetComponentTypeCount() const noexcept { return m_names.size(); }
 
     private:
@@ -67,20 +61,20 @@ namespace wCore
             void* capacity{};
 
             template<typename T>
-            inline T* Begin() noexcept { return static_cast<T*>(begin); }
+            [[nodiscard]] inline T* Begin() noexcept { return static_cast<T*>(begin); }
             template<typename T>
-            inline T* End() noexcept { return static_cast<T*>(end); }
+            [[nodiscard]] inline T* End() noexcept { return static_cast<T*>(end); }
             template<typename T>
-            inline T* Capacity() noexcept { return static_cast<T*>(capacity); }
+            [[nodiscard]] inline T* Capacity() noexcept { return static_cast<T*>(capacity); }
 
             template<typename T>
-            inline const T* Begin() const noexcept { return static_cast<const T*>(begin); }
+            [[nodiscard]] inline const T* Begin() const noexcept { return static_cast<const T*>(begin); }
             template<typename T>
-            inline const T* End() const noexcept { return static_cast<const T*>(end); }
+            [[nodiscard]] inline const T* End() const noexcept { return static_cast<const T*>(end); }
             template<typename T>
-            inline const T* Capacity() const noexcept { return static_cast<const T*>(capacity); }
+            [[nodiscard]] inline const T* Capacity() const noexcept { return static_cast<const T*>(capacity); }
 
-            static constexpr ListHeader Filled(void* ptr) noexcept { return { ptr, ptr, ptr }; }
+            [[nodiscard]] static constexpr ListHeader Filled(void* ptr) noexcept { return { ptr, ptr, ptr }; }
         };
 
         using ComponentReallocateFn = void(*)(ListHeader& header, wIndex newCapacity);

@@ -3,7 +3,7 @@
 
 namespace wCore
 {
-    ComponentSetup::ComponentSetup()
+    ComponentSetup::ComponentSetup() noexcept
         : m_names(), m_types()
     {
     }
