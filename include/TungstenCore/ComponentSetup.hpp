@@ -17,19 +17,50 @@ namespace wCore
     class ComponentSetup
     {
     public:
-        ComponentSetup();
+        struct DefaultGrowthPolicy
+        {
+            static constexpr wIndex InitialCapacity = 8;
+
+            template<typename T, wIndex PageSize>
+            [[nodiscard]] static inline constexpr wIndex Next(wIndex requested, wIndex current) noexcept
+            {
+                if constexpr (PageSize)
+                {
+                    return NextCapacity(requested, current);
+                }
+                else
+                {
+                    return NextPageCount(requested, current);
+                }
+            }
+
+            [[nodiscard]] static inline constexpr wIndex NextCapacity(wIndex requested, wIndex current) noexcept
+            {
+                if (!current)
+                {
+                    return std::max(InitialCapacity, requested);
+                }
+                return std::max(current * 2, requested);
+            }
+
+            [[nodiscard]] static inline constexpr wIndex NextPageCount(wIndex requestedPageCount, wIndex currentPageCount) noexcept { return requestedPageCount; }
+        };
+
+        ComponentSetup() noexcept = default;
+        static_assert(std::is_nothrow_default_constructible_v<std::string>);
 
         ComponentSetup(const ComponentSetup&) = delete;
         ComponentSetup& operator=(const ComponentSetup&) = delete;
 
-        template<typename T>
+        template<typename T,
+                 wIndex PageSize = 0,
+                 typename GrowthPolicy = DefaultGrowthPolicy>
         void Add(std::string_view typeName)
         {
             static_assert(std::is_nothrow_destructible_v<T>, "Components must be nothrow-destructible");
             W_ASSERT(!StaticComponentID<T>::Get(), "Component: {} Already added to ComponentSetup!", typeName);
             m_names.emplace_back(typeName);
-            m_emptySentinals.emplace_back(EmptySentinel<T>());
-            m_types.emplace_back(sizeof(T), alignof(T), &ReallocateKnownList<T>, &CreateComponent<T>, &DestroyKnownListUnchecked<T>);
+            //m_types.emplace_back(sizeof(T), alignof(T), &ReallocateComponentList<T>, &CreateComponent<T, PageSize, GrowthPolicy>, &DestroyKnownListUnchecked<T>);
             StaticComponentID<T>::Set(m_names.size());
         }
 
@@ -44,42 +75,22 @@ namespace wCore
         inline wIndex GetComponentTypeCount() const noexcept { return m_names.size(); }
 
     private:
-        static constexpr wIndex InitialCapacity = 8;
-        static inline constexpr wIndex CalculateNextCapacity(wIndex requested, wIndex current) noexcept
+        struct ComponentListHeader
         {
-            if (!current)
-            {
-                return std::max(InitialCapacity, requested);
-            }
-            return std::max(current * 2, requested);
-        }
-
-        struct ListHeader
-        {
-            void* begin{};
-            void* end{};
-            void* capacity{};
+            void* data{};
+            wIndex count{};
+            wIndex pageCount{};
 
             template<typename T>
-            [[nodiscard]] inline T* Begin() noexcept { return static_cast<T*>(begin); }
-            template<typename T>
-            [[nodiscard]] inline T* End() noexcept { return static_cast<T*>(end); }
-            template<typename T>
-            [[nodiscard]] inline T* Capacity() noexcept { return static_cast<T*>(capacity); }
+            [[nodiscard]] inline T** Data() noexcept { return static_cast<T*>(data); }
 
             template<typename T>
-            [[nodiscard]] inline const T* Begin() const noexcept { return static_cast<const T*>(begin); }
-            template<typename T>
-            [[nodiscard]] inline const T* End() const noexcept { return static_cast<const T*>(end); }
-            template<typename T>
-            [[nodiscard]] inline const T* Capacity() const noexcept { return static_cast<const T*>(capacity); }
-
-            [[nodiscard]] static constexpr ListHeader Filled(void* ptr) noexcept { return { ptr, ptr, ptr }; }
+            [[nodiscard]] inline const T** Data() const noexcept { return static_cast<const T*>(data); }
         };
 
-        using ComponentReallocateFn = void(*)(ListHeader& header, wIndex newCapacity);
-        using ComponentCreateFn = wIndex(*)(ListHeader& header, Application& app);
-        using ComponentDestroyFn = void(*)(ListHeader& header);
+        using ComponentReallocateFn = void(*)(ComponentListHeader& header, wIndex newCapacity);
+        using ComponentCreateFn = wIndex(*)(ComponentListHeader& header, Application& app);
+        using ComponentDestroyFn = void(*)(ComponentListHeader& header);
 
         struct ComponentType
         {
@@ -93,127 +104,61 @@ namespace wCore
             ComponentDestroyFn destroy;
         };
 
-        template<typename T>
-        static wIndex CreateComponent(ListHeader& header, Application& app)
+        /*template<typename T, wIndex PageSize, typename GrowthPolicy>
+        static wIndex CreateComponent(ComponentListHeader& header, Application& app)
         {
             if constexpr (std::is_constructible_v<T, Application&>)
             {
-                return EmplaceKnownList<T>(header, app);
+                return EmplaceKnownList<T, PageSize, GrowthPolicy>(header, app);
             }
             else
             {
-                return EmplaceKnownList<T>(header);
+                return EmplaceKnownList<T, PageSize, GrowthPolicy>(header);
             }
         }
 
-        template<typename T, typename... Args>
-        static wIndex EmplaceKnownList(ComponentSetup::ListHeader& header, Args&&... args)
+        template<typename T, wIndex PageSize, typename GrowthPolicy, typename... Args>
+        static wIndex EmplaceComponentList(ComponentListHeader& header, Args&&... args)
         {
-            T* end = header.End<T>();
-            const T* const begin = header.Begin<T>();
-            const T* const capacity = header.Capacity<T>();
-            const wIndex oldCount = end - begin;
-
-            if (end == capacity)
+            if (header.count == header.pageCount * PageSize)
             {
-                ReallocateKnownList<T>(header, CalculateNextCapacity(oldCount + 1, capacity - begin));
-                end = header.End<T>();
+                ReallocateComponentList<T>(header, GrowthPolicy::Next(header.pageCount + 1, header.pageCount));
             }
 
-            std::construct_at(end, std::forward<Args>(args)...);
+            std::construct_at(header.Data<T>() + header.count, std::forward<Args>(args)...);
 
-            header.end = end + 1;
-            return oldCount;
+            return ++header.count;
         }
 
         template<typename T>
-        static void ReallocateKnownList(ListHeader& header, wIndex newCapacity)
+        static void ReallocateComponentList(ComponentListHeader& header, wIndex newPageCount)
         {
-            const T* const end = header.End<T>();
-            T* const begin = header.Begin<T>();
-            const std::size_t oldCount = end - begin;
+            T* const data = header.Data<T>();
 
-            T* newMemory = static_cast<T*>(
-                ::operator new(newCapacity * sizeof(T), std::align_val_t(alignof(T)))
+            T** newMemory = static_cast<T**>(
+                ::operator new(newPageCount * sizeof(T*), std::align_val_t(alignof(T*)))
             );
 
-            if constexpr (std::is_trivially_copyable_v<T>)
+            if (data)
             {
-                if (oldCount)
-                {
-                    std::memcpy(newMemory, header.begin, oldCount * sizeof(T));
-                }
-            }
-            else
-            {
-#if TUNGSTENCORE_COMPONENT_LIST_NOEXCEPT_POLICY
-                static_assert(std::is_trivially_copyable_v<T> || std::is_nothrow_move_constructible_v<T>, "TUNGSTENCORE_COMPONENT_LIST_NOEXCEPT_POLICY requires trivially copyable or nothrow-move T");
-                T* dst = newMemory;
-                for (T* src = begin; src != end; ++src, ++dst)
-                {
-                    std::construct_at(dst, std::move(*src));
-                    if constexpr (!std::is_trivially_destructible_v<T>)
-                    {
-                        std::destroy_at(src);
-                    }
-                }
-#else
-                T* dst = newMemory;
-                T* src = begin;
-                try
-                {
-                    for (; src != end; ++src, ++dst)
-                    {
-                        std::construct_at(dst, std::move_if_noexcept(*src));
-                    }
-                }
-                catch (...)
-                {
-                    if constexpr (!std::is_trivially_destructible_v<T>)
-                    {
-                        for (T* element = newMemory; element != dst; ++element)
-                        {
-                            std::destroy_at(element);
-                        }
-                    }
-                    ::operator delete(newMemory, std::align_val_t(alignof(T)));
-                    throw;
-                }
-                if constexpr (!std::is_trivially_destructible_v<T>)
-                {
-                    for (T* element = begin; element != end; ++element)
-                    {
-                        std::destroy_at(element);
-                    }
-                }
-#endif
-            }
-
-            if (!IsSentinel(begin))
-            {
+                std::memcpy(newMemory, header.data, header.count * sizeof(T*));
                 ::operator delete(header.begin, std::align_val_t(alignof(T)));
             }
 
-            header.begin = newMemory;
-            header.end = newMemory + oldCount;
-            header.capacity = newMemory + newCapacity;
+            header.data = newMemory;
+            header.capacity = newCapacity;
         }
 
         template<typename T>
-        static void DestroyKnownListUnchecked(ListHeader& header) noexcept
+        static void DestroyKnownListUnchecked(ComponentListHeader& header) noexcept
         {
             if constexpr (!std::is_trivially_destructible_v<T>)
             {
-                T* const begin = header.Begin<T>();
-                T* const end = header.End<T>();
-                for (T* element = begin; element != end; ++element)
-                {
-                    std::destroy_at(element);
-                }
+                T* const data = header.Data<T>();
+                std::destroy_n(data, header.count);
             }
-            ::operator delete(header.begin, std::align_val_t(alignof(T)));
-        }
-
+            ::operator delete(header.data, std::align_val_t(alignof(T)));
+        }*/
 
         template<typename T>
         class StaticComponentID
@@ -226,29 +171,7 @@ namespace wCore
             static inline ComponentTypeIndex s_id;
         };
 
-        template<typename T>
-        struct SentinelStorage
-        {
-            alignas(T) static inline std::byte raw[sizeof(T)];
-        };
-
-        template<typename T0>
-        static auto EmptySentinel() noexcept
-        {
-            using T    = std::remove_reference_t<T0>;
-            using Base = std::remove_cv_t<T>;
-            using P    = std::conditional_t<std::is_const_v<T>, const Base*, Base*>;
-            return reinterpret_cast<P>(SentinelStorage<Base>::raw);
-        }
-
-        template<typename T>
-        static inline bool IsSentinel(const T* ptr) noexcept { return ptr == EmptySentinel<T>(); }
-
-        template<typename T>
-        static inline bool IsSentinel(const void* ptr) noexcept { return static_cast<const T*>(ptr) == EmptySentinel<T>(); }
-
         std::vector<std::string> m_names;
-        std::vector<void*> m_emptySentinals;
         std::vector<ComponentType> m_types;
 
         friend class ComponentSystem;

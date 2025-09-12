@@ -13,11 +13,11 @@ namespace wCore
         W_DEBUG_LOG_INFO("Hello, From Application.Run!");
 
         W_DEBUG_LOG_INFO("Creating Scene...");
-        SceneIndex sceneIndex = m_componentSystem.CreateScene();
-        W_DEBUG_LOG_INFO("Created Scene At Index: {}", sceneIndex);
+        //SceneIndex sceneIndex = m_componentSystem.CreateScene();
+        //W_DEBUG_LOG_INFO("Created Scene At Index: {}", sceneIndex);
 
         std::vector<ComponentIndex> indexes;
-        indexes.emplace_back(m_componentSystem.CreateComponent(1, sceneIndex));
+        /*indexes.emplace_back(m_componentSystem.CreateComponent(1, sceneIndex));
         indexes.emplace_back(m_componentSystem.CreateComponent(1, sceneIndex));
         indexes.emplace_back(m_componentSystem.CreateComponent(1, sceneIndex));
         indexes.emplace_back(m_componentSystem.CreateComponent(1, sceneIndex));
@@ -39,7 +39,7 @@ namespace wCore
         indexes.emplace_back(m_componentSystem.CreateComponent(1, sceneIndex));
         indexes.emplace_back(m_componentSystem.CreateComponent(1, sceneIndex));
         indexes.emplace_back(m_componentSystem.CreateComponent(1, sceneIndex));
-        indexes.emplace_back(m_componentSystem.CreateComponent(2, sceneIndex));
+        indexes.emplace_back(m_componentSystem.CreateComponent(2, sceneIndex));*/
         W_DEBUG_LOG_INFO("All Created");
 
         return Application::RunOutput(0);

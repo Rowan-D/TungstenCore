@@ -42,11 +42,9 @@ add_library(TungstenCore
     include/TungstenCore/Application.hpp
     include/TungstenCore/ComponentSystem.hpp
     include/TungstenCore/ComponentSetup.hpp
-    include/TungstenCore/Scene.hpp
     src/wCorePCH.cpp
     src/Application.cpp
     src/ComponentSystem.cpp
-    src/ComponentSetup.cpp
 )
 
 target_include_directories(TungstenCore PUBLIC
