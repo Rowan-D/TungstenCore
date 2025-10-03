@@ -50,12 +50,12 @@ namespace wCore
 
         // Scenes
         void ReserveScenes(wIndex minCapacity);
-        inline void ReserveSceneFreeList(wIndex minCapacity) { m_sceneFreeList.reserve(minCapacity); }
+        inline void ReserveSceneFreeList(wIndex minCapacity) { m_sceneFreeList.Reserve(minCapacity); }
 
         [[nodiscard]] inline SceneIndex CreateScene() { return CreateScene(""); }
         [[nodiscard]] SceneIndex CreateScene(std::string_view name);
-        void DestroyScene(SceneIndex sceneIndex);
-        //[[nodiscard]] inline bool SceneExists(SceneIndex sceneIndex) { return m_componentLists[GetSceneStartListIndex(sceneIndex)].begin; }
+        void DestroyScene(SceneIndex sceneIndex) noexcept;
+        [[nodiscard]] inline bool SceneExists(SceneIndex sceneIndex) const noexcept;
 
         //inline const Scene& GetScene(uint32_t sceneIndex) const { return m_scenes[sceneIndex - 1]; }
 /*
@@ -67,8 +67,8 @@ namespace wCore
         [[nodiscard]] inline wIndex GetSceneSlotCount() const noexcept { return m_sceneData.size(); }
         [[nodiscard]] inline wIndex GetSceneSlotCapacity() const noexcept { return m_sceneData.capacity(); }
         */
-        [[nodiscard]] inline wIndex GetSceneFreeListCount() const noexcept { return m_sceneFreeList.size(); }
-        [[nodiscard]] inline wIndex GetSceneFreeListCapacity() const noexcept { return m_sceneFreeList.capacity(); }
+        [[nodiscard]] inline wIndex GetSceneFreeListCount() const noexcept { return m_sceneFreeList.Count(); }
+        [[nodiscard]] inline wIndex GetSceneFreeListCapacity() const noexcept { return m_sceneFreeList.Capacity(); }
 
         // Components
         //inline void ReserveComponents(wIndex sceneIndex, wIndex minCapacity) { ReserveKnownList<Component>(m_componentLists[GetSceneStartListIndex(sceneIndex) + ComponentListOffset], minCapacity); }
@@ -117,19 +117,28 @@ namespace wCore
         [[nodiscard]] inline const ComponentSetup& GetComponentSetup() const { return m_componentSetup; }
 
         // Internal
-        void ReserveComponents(ComponentTypeIndex componentTypeIndex, SceneIndex sceneIndex, wIndex componentCapacity);
+        void ReserveComponents(ComponentTypeIndex componentTypeIndex, SceneIndex sceneIndex, wIndex minCapacity);
         [[nodiscard]] ComponentIndex CreateComponent(ComponentTypeIndex componentTypeIndex, SceneIndex sceneIndex);
 
         [[nodiscard]] inline wIndex GetComponentCount(ComponentTypeIndex componentTypeIndex, wIndex sceneIndex) const;
         [[nodiscard]] inline wIndex GetComponentCapacity(ComponentTypeIndex componentTypeIndex, wIndex sceneIndex) const;
 
     private:
-        enum class KnownList : std::size_t {
-            NameIndex = 0,
-            ParentIndex,
-            ComponentListIndex,
-            ComponentName,
-            Count
+        static constexpr wIndex InitialCapacity = 8;
+        static inline constexpr wIndex CalculateNextCapacity(wIndex current) noexcept
+        {
+            if (current)
+            {
+                return current * 2;
+            }
+            return InitialCapacity;
+        }
+
+        struct ListHeader
+        {
+            void* data;
+            wIndex count;
+            wIndex capacity;
         };
 
         struct SceneData
@@ -238,14 +247,13 @@ namespace wCore
         template<typename T>
         [[nodiscard]] inline static std::span<const T> GetSpanFromKnownList(const ComponentSetup::ListHeader& header) noexcept { return { header.Begin<T>(), header.End<T>() }; }
 */
-        void ReallocateComponentLists(wIndex sceneCapacity);
+        void ReallocateScenes(wIndex newCapacity);
         void DeleteSceneContent(std::size_t sceneStartPtrIndex);
 
         void DestroyComponentList(std::size_t sceneStartPtrIndex, ComponentTypeIndex componentTypeIndex);
 
         // Component
         // std::string names
-        [[nodiscard]] inline std::size_t GetSceneSizeBytes() const noexcept { return m_currentComponentTypeCount * sizeof(ComponentSetup::ComponentListHeader); }
         [[nodiscard]] inline std::size_t GetSceneStartListIndex(SceneIndex sceneIndex) const noexcept { return (sceneIndex - 1) * m_currentComponentTypeCount; }
 
         [[nodiscard]] static constexpr std::size_t GetComponentListOffset(ComponentTypeIndex componentTypeIndex) noexcept { return componentTypeIndex - 1; }
@@ -265,16 +273,28 @@ namespace wCore
         template<typename T>
         [[nodiscard]] inline const ComponentSetup::ListHeader& GetComponentListHeader(SceneIndex sceneIndex) const noexcept { return m_componentLists[GetComponentListIndex<T>(sceneIndex)]; }
 */
+
+        // void* data and Generation* for each component type
+        static inline constexpr std::size_t GetPointerCountPerScene(std::size_t componentTypeCount) noexcept { return 2 * componentTypeCount; }
+
+        // wIndex slotCount and wIndex capacity for each component type
+        static inline constexpr std::size_t GetIndexCountPerScene(std::size_t componentTypeCount) noexcept { return 2 * componentTypeCount; }
+
         Application& m_app;
         ComponentSetup m_componentSetup;
         wIndex m_currentComponentTypeCount;
 
-        void* m_componentLists;
-        wIndex m_componentListsSlotCount;
-        wIndex m_componentListsSlotCapacity;
+        std::byte* m_scenes;
+        void** m_ptrs;
+        wIndex* m_indexes;
+        wUtils::RelocatableFreeListHeader<wIndex>* m_freeLists;
+        SceneData* m_sceneData;
+        wIndex m_sceneSlotCount;
+        wIndex m_sceneSlotCapacity;
 
         std::vector<SceneGeneration> m_sceneGenerations;
-        std::vector<wIndex> m_sceneFreeList;
+        wUtils::FreeList<wIndex> m_sceneFreeList;
+        wUtils::SlotList<std::string> m_sceneNames;
     };
 
     class Scene

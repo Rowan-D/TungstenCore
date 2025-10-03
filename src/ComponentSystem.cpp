@@ -1,7 +1,11 @@
 #include "wCorePCH.hpp"
 #include "TungstenCore/ComponentSystem.hpp"
 
-// A scene is invalid if the first void* is nullptr, empty if sentinel, contains something if neather.
+// A scene is invalid if the first slotCount is greater than the first capacity
+// slotCount: 1
+// capacity: 0
+// invalid if slotCount > capacity
+// exists if slotCount <= capacity
 
 namespace wCore
 {
@@ -9,7 +13,7 @@ namespace wCore
 
     ComponentSystem::ComponentSystem(Application& app) noexcept
         : m_app(app), m_componentSetup(), m_currentComponentTypeCount(0),
-        m_componentLists(nullptr), m_componentListsSlotCount(0), m_componentListsSlotCapacity(0),
+        m_scenes(nullptr), m_sceneSlotCount(0), m_sceneSlotCapacity(0),
         m_sceneFreeList()
     {
     }
@@ -32,42 +36,53 @@ namespace wCore
 
     void ComponentSystem::ReserveScenes(wIndex minCapacity)
     {
-        if (minCapacity > m_componentListsSlotCapacity)
+        if (minCapacity > m_sceneSlotCapacity)
         {
-            //ReallocateComponentLists(minCapacity);
+            ReallocateScenes(minCapacity);
         }
     }
 
-    /*wIndex ComponentSystem::CreateScene(std::string_view name)
+    wIndex ComponentSystem::CreateScene(std::string_view name)
     {
-        if (m_sceneFreeList.empty())
+        const std::size_t pointerCountPerScene = GetPointerCountPerScene(m_currentComponentTypeCount);
+        const std::size_t indexCountPerScene = GetIndexCountPerScene(m_currentComponentTypeCount);
+
+        if (m_sceneFreeList.Empty())
         {
-            if (m_sceneData.size() == m_componentListsCapacity)
+            if (m_sceneSlotCount == m_sceneSlotCapacity)
             {
-                ReallocateComponentLists(ComponentSetup::CalculateNextCapacity(m_sceneData.size() + 1, m_componentListsCapacity));
+                ReallocateScenes(CalculateNextCapacity(m_sceneSlotCapacity));
             }
 
-            const std::size_t sceneStartListIndex = m_sceneData.size() * sceneSizeLists;
-            std::memcpy(m_componentLists + sceneStartListIndex, m_emptyComponentLists, sceneSizeLists * sizeof(void*));
+            const std::size_t sceneStartPointerIndex = m_sceneSlotCount * pointerCountPerScene;
+            const std::size_t sceneStartIndexIndex = m_sceneSlotCount * indexCountPerScene;
+            const std::size_t sceneStartFreeListIndex = m_sceneSlotCount * m_currentComponentTypeCount;
 
-            m_sceneData.emplace_back(name);
+            std::memset(m_ptrs + sceneStartPointerIndex, 0, sizeof(void*) * pointerCountPerScene);
+            std::memset(m_indexes + sceneStartIndexIndex, 0, sizeof(wIndex) * indexCountPerScene);
+            std::memset(m_freeLists + sceneStartFreeListIndex, 0, sizeof(wUtils::RelocatableFreeListHeader<wIndex>) * m_currentComponentTypeCount);
+            std::construct_at(m_sceneData + m_sceneSlotCount);
 
-            return m_sceneData.size();
+            return m_sceneSlotCount++;
         }
-        const wIndex sceneIndex = m_sceneFreeList.back();
-        m_sceneFreeList.pop_back();
+        const wIndex sceneIndex = m_sceneFreeList.Remove();
 
-        // Reset the memory to empty sentinels
-        const std::size_t sceneStartListIndex = GetSceneStartListIndex(sceneIndex);
-        W_ASSERT(m_componentLists[sceneStartListIndex].begin, "A Free/Invalid ComponentList Should Have the first pointer be false (Set to nullptr).");
-        std::memcpy(m_componentLists + sceneStartListIndex, m_emptyComponentLists, sceneSizeLists * sizeof(ComponentSetup::ListHeader));
+        // Reset the memory
+        const std::size_t sceneStartPointerIndex = (sceneIndex - 1) * pointerCountPerScene;
+        const std::size_t sceneStartIndexIndex = (sceneIndex - 1) * indexCountPerScene;
+        const std::size_t sceneStartFreeListIndex = (sceneIndex - 1) * m_currentComponentTypeCount;
 
-        m_sceneData[sceneIndex - 1] = SceneData(name);
+        W_ASSERT(m_indexes[sceneStartIndexIndex] > m_indexes[sceneStartIndexIndex + m_currentComponentTypeCount], "A Free/Invalid ComponentList Should the first slotCount be less than the first capacity. Expected: slotCount: 1, capacity: 0, slotCount: {}, capacity {}", m_indexes[sceneStartIndexIndex], m_indexes[sceneStartIndexIndex + m_currentComponentTypeCount]);
+
+        std::memset(m_ptrs + sceneStartPointerIndex, 0, sizeof(void*) * pointerCountPerScene);
+        std::memset(m_indexes + sceneStartIndexIndex, 0, sizeof(wIndex) * indexCountPerScene);
+        std::memset(m_freeLists + sceneStartFreeListIndex, 0, sizeof(wUtils::RelocatableFreeListHeader<wIndex>) * m_currentComponentTypeCount);
+        std::construct_at(m_sceneData + sceneIndex - 1);
 
         return sceneIndex;
     }
 
-    void ComponentSystem::DestroyScene(wIndex sceneIndex)
+    /*void ComponentSystem::DestroyScene(wIndex sceneIndex)
     {
         const std::size_t sceneStartListIndex = GetSceneStartListIndex(sceneIndex);
         ComponentSetup::ListHeader& firstElement = m_componentLists[sceneStartListIndex];
@@ -77,26 +92,45 @@ namespace wCore
             firstElement.begin = nullptr;
             m_sceneFreeList.push_back(sceneIndex);
         }
+    }*/
+
+    [[nodiscard]] inline bool ComponentSystem::SceneExists(SceneIndex sceneIndex) const noexcept
+    {
+        const std::size_t sceneStartIndexIndex = (sceneIndex - 1) * GetIndexCountPerScene(m_currentComponentTypeCount);
+        return m_indexes[sceneStartIndexIndex] <= m_indexes[sceneStartIndexIndex + m_currentComponentTypeCount];
     }
 
-    void ComponentSystem::ReserveComponents(ComponentTypeIndex componentTypeIndex, SceneIndex sceneIndex, wIndex componentCapacity)
+    void ComponentSystem::ReserveComponents(ComponentTypeIndex componentTypeIndex, SceneIndex sceneIndex, wIndex minCapacity)
     {
-        ComponentSetup::ListHeader& header = GetComponentListHeader(sceneIndex, componentTypeIndex);
         const ComponentSetup::ComponentType type = m_componentSetup.m_types[componentTypeIndex - 1];
-        if (componentCapacity * type.size > header.Capacity<std::byte>() - header.Begin<std::byte>())
+        const std::size_t sceneStartIndexIndex = (sceneIndex - 1) * GetIndexCountPerScene(m_currentComponentTypeCount);
+        const wIndex slotCount = m_indexes[sceneStartIndexIndex + componentTypeIndex - 1];
+        const wIndex capacity = m_indexes[sceneStartIndexIndex + m_currentComponentTypeCount + componentTypeIndex - 1];
+        const wUtils::RelocatableFreeListHeader<wIndex> freeList = m_freeLists[sceneStartIndexIndex + m_currentComponentTypeCount + componentTypeIndex - 1];
+
+        W_IF_UNLIKELY(type.pageSize)
         {
-            type.reallocate(header, componentCapacity);
+            if (minCapacity > capacity * type.pageSize - freeList.Count()) {
+                const std::size_t sceneStartPointerIndex = (sceneIndex - 1) * GetPointerCountPerScene(m_currentComponentTypeCount);
+                type.reallocatePages(m_ptrs[sceneStartPointerIndex], componentCapacity);
+            }
+        }
+        W_ELSE_LIKELY
+        {
+            if (minCapacity > slotCapacity - freeList.Count()) {
+                type.reallocateComponents(, componentCapacity);
+            }
         }
     }
 
     ComponentIndex ComponentSystem::CreateComponent(ComponentTypeIndex componentTypeIndex, SceneIndex sceneIndex)
     {
-        const std::size_t sceneStartListIndex = GetSceneStartListIndex(sceneIndex);
-        const wIndex listIndex = m_componentSetup.m_types[componentTypeIndex - 1].create(m_componentLists[sceneStartListIndex + GetComponentListOffset(componentTypeIndex)], m_app);
-        return ComponentSetup::EmplaceKnownList<Component>(m_componentLists[sceneStartListIndex + ComponentListOffset], 0, listIndex) + 1;
+        //const std::size_t sceneStartListIndex = GetSceneStartListIndex(sceneIndex);
+        //const wIndex listIndex = m_componentSetup.m_types[componentTypeIndex - 1].create(m_componentLists[sceneStartListIndex + GetComponentListOffset(componentTypeIndex)], m_app);
+        return 0;// ComponentSetup::EmplaceKnownList<Component>(m_componentLists[sceneStartListIndex + ComponentListOffset], 0, listIndex) + 1;
     }
 
-    wIndex ComponentSystem::GetComponentCount(ComponentTypeIndex componentTypeIndex, wIndex sceneIndex) const
+    /*wIndex ComponentSystem::GetComponentCount(ComponentTypeIndex componentTypeIndex, wIndex sceneIndex) const
     {
         const ComponentSetup::ListHeader& header = GetComponentListHeader(sceneIndex, componentTypeIndex);
         return (header.End<std::byte>() - header.Begin<std::byte>()) / m_componentSetup.m_types[componentTypeIndex - 1].size;
@@ -108,54 +142,72 @@ namespace wCore
         return (header.Capacity<std::byte>() - header.Begin<std::byte>()) / m_componentSetup.m_types[componentTypeIndex - 1].size;
     }*/
 
-    /*void ComponentSystem::ReallocateComponentLists(wIndex newCapacity)
+    void ComponentSystem::ReallocateScenes(wIndex newCapacity)
     {
-        m_componentListsSlotCapacity = newCapacity;
+        m_sceneSlotCapacity = newCapacity;
 
-        if (m_componentLists)
+        if (m_scenes)
         {
-            const std::size_t sceneSizeBytes = GetSceneSizeBytes();
-            ComponentSetup::ListHeader* newComponentLists = static_cast<ComponentSetup::ListHeader*>(
-                ::operator new(newCapacity * sceneSizeBytes, std::align_val_t(alignof(ComponentSetup::ListHeader)))
+            m_currentComponentTypeCount = m_componentSetup.GetComponentTypeCount();
+        }
+
+        const wIndex ptrCountPerScene = GetPointerCountPerScene(m_currentComponentTypeCount);
+        const wIndex indexCountPerScene = GetIndexCountPerScene(m_currentComponentTypeCount);
+
+        std::size_t offset = 0;
+
+        offset = wUtils::AlignUp(offset, alignof(void*));
+        const std::size_t ptrOffset = offset;
+        offset += ptrCountPerScene * newCapacity * sizeof(void*);
+
+        offset = wUtils::AlignUp(offset, alignof(wIndex));
+        const std::size_t indexOffset = offset;
+        offset += indexCountPerScene * newCapacity * sizeof(wIndex);
+
+        offset = wUtils::AlignUp(offset, alignof(wUtils::RelocatableFreeListHeader<wIndex>));
+        const std::size_t freeListOffset = offset;
+        offset += m_currentComponentTypeCount * newCapacity * sizeof(wUtils::RelocatableFreeListHeader<wIndex>);
+
+        offset = wUtils::AlignUp(offset, alignof(SceneData));
+        const std::size_t sceneDataOffset = offset;
+        offset += newCapacity * sizeof(SceneData);
+
+        constexpr std::size_t alignment = std::max(std::max(alignof(void*), alignof(wIndex)), std::max(alignof(wUtils::RelocatableFreeListHeader<wIndex>), alignof(SceneData)));
+        if (m_scenes)
+        {
+            std::byte* newScenes = static_cast<std::byte*>(
+                ::operator new(offset, std::align_val_t(alignof(alignment)))
             );
 
-            if (!m_sceneData.empty())
+            void** newPtrs = reinterpret_cast<void**>(newScenes + ptrOffset);
+            wIndex* newIndexes = reinterpret_cast<wIndex*>(newScenes + indexOffset);
+            wUtils::RelocatableFreeListHeader<wIndex>* newFreeLists = reinterpret_cast<wUtils::RelocatableFreeListHeader<wIndex>*>(newScenes + freeListOffset);
+            SceneData* newSceneData = reinterpret_cast<SceneData*>(newScenes + sceneDataOffset);
+
+            if (m_sceneSlotCount)
             {
-                std::memcpy(newComponentLists, m_componentLists, m_sceneData.size() * sceneSizeBytes);
+                std::memcpy(newPtrs, m_ptrs, m_sceneSlotCount * ptrCountPerScene * sizeof(void*));
+                std::memcpy(newIndexes, m_indexes, m_sceneSlotCount * indexCountPerScene * sizeof(wIndex));
+                std::memcpy(newFreeLists, m_freeLists, m_sceneSlotCount * sizeof(wUtils::RelocatableFreeListHeader<wIndex>));
+                std::memcpy(newSceneData, m_sceneData, m_sceneSlotCount * sizeof(SceneData));
             }
 
-            ::operator delete(m_componentLists, std::align_val_t(alignof(ComponentSetup::ListHeader*)));
+            ::operator delete(m_scenes, std::align_val_t(alignof(alignment)));
 
-            m_componentLists = newComponentLists;
+            m_scenes = newScenes;
         }
         else
         {
-            m_currentComponentTypeCount = m_componentSetup.GetComponentTypeCount();
-            const std::size_t sceneSizeBytes = GetSceneSizeBytes();
-
-            m_emptyComponentLists = static_cast<ComponentSetup::ListHeader*>(
-                ::operator new(sceneSizeBytes, std::align_val_t(alignof(ComponentSetup::ListHeader)))
-            );
-
-            void* const componentSentinel = ComponentSetup::EmptySentinel<Component>();
-            void* const standardStringSentinel = ComponentSetup::EmptySentinel<std::string>();
-
-            m_emptyComponentLists[0] = { componentSentinel, componentSentinel, componentSentinel };
-            m_emptyComponentLists[1] = { standardStringSentinel, standardStringSentinel, standardStringSentinel };
-
-            ComponentSetup::ListHeader* dst = m_emptyComponentLists + KnownListCount;
-            void* const* src = m_componentSetup.m_emptySentinals.data();
-
-            for (wIndex i = 0; i < m_currentComponentTypeCount; ++i)
-            {
-                *dst++ = ComponentSetup::ListHeader::Filled(src[i]);
-            }
-
-            m_componentLists = static_cast<ComponentSetup::ListHeader*>(
-                ::operator new(newCapacity * sceneSizeBytes, std::align_val_t(alignof(ComponentSetup::ListHeader)))
+            m_scenes = static_cast<std::byte*>(
+                ::operator new(offset, std::align_val_t(alignment))
             );
         }
-    }*/
+
+        m_ptrs = reinterpret_cast<void**>(m_scenes + ptrOffset);
+        m_indexes = reinterpret_cast<wIndex*>(m_scenes + indexOffset);
+        m_freeLists = reinterpret_cast<wUtils::RelocatableFreeListHeader<wIndex>*>(m_scenes + freeListOffset);
+        m_sceneData = reinterpret_cast<SceneData*>(m_scenes + sceneDataOffset);
+    }
 
     /*void ComponentSystem::DeleteSceneContent(std::size_t sceneStartListIndex) noexcept
     {

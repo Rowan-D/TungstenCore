@@ -36,11 +36,11 @@ namespace wCore
 
             [[nodiscard]] static inline constexpr wIndex NextCapacity(wIndex requested, wIndex current) noexcept
             {
-                if (!current)
+                if (current)
                 {
-                    return std::max(InitialCapacity, requested);
+                    return std::max(current * 2, requested);
                 }
-                return std::max(current * 2, requested);
+                return std::max(InitialCapacity, requested);
             }
 
             [[nodiscard]] static inline constexpr wIndex NextPageCount(wIndex requestedPageCount, wIndex currentPageCount) noexcept { return requestedPageCount; }
@@ -60,7 +60,14 @@ namespace wCore
             static_assert(std::is_nothrow_destructible_v<T>, "Components must be nothrow-destructible");
             W_ASSERT(!StaticComponentID<T>::Get(), "Component: {} Already added to ComponentSetup!", typeName);
             m_names.emplace_back(typeName);
-            //m_types.emplace_back(sizeof(T), alignof(T), &ReallocateComponentList<T>, &CreateComponent<T, PageSize, GrowthPolicy>, &DestroyKnownListUnchecked<T>);
+            if constexpr (PageSize)
+            {
+                m_types.emplace_back(sizeof(T), alignof(T), &ReallocatePages<T, PageSize>, /*&CreateComponent<T, PageSize, GrowthPolicy>*/ nullptr, /*&DestroyKnownListUnchecked<T>*/ nullptr, PageSize);
+            }
+            else
+            {
+                m_types.emplace_back(sizeof(T), alignof(T), &ReallocateComponents<T>, /*&CreateComponent<T, PageSize, GrowthPolicy>*/ nullptr, /*&DestroyKnownListUnchecked<T>*/ nullptr);
+            }
             StaticComponentID<T>::Set(m_names.size());
         }
 
@@ -88,20 +95,29 @@ namespace wCore
             [[nodiscard]] inline const T** Data() const noexcept { return static_cast<const T*>(data); }
         };
 
-        using ComponentReallocateFn = void(*)(ComponentListHeader& header, wIndex newCapacity);
+        using ReallocateComponentsFn = void(*)(void*& data, wIndex slotCount, wIndex& capacity, wIndex newSlotCapacity);
+        using ReallocatePagesFn = void(*)(void*& data, wIndex& pageCount, wIndex newPageCount);
         using ComponentCreateFn = wIndex(*)(ComponentListHeader& header, Application& app);
         using ComponentDestroyFn = void(*)(ComponentListHeader& header);
 
         struct ComponentType
         {
-            ComponentType(std::size_t a_size, std::size_t a_alignment, ComponentReallocateFn a_reallocate, ComponentCreateFn a_create, ComponentDestroyFn a_destroy)
-                : size(a_size), alignment(a_alignment), reallocate(a_reallocate), create(a_create), destroy(a_destroy) {}
+            ComponentType(std::size_t a_size, std::size_t a_alignment, ReallocateComponentsFn reallocateComponents, ComponentCreateFn a_create, ComponentDestroyFn a_destroy, wIndex a_pageSize)
+                : size(a_size), alignment(a_alignment), reallocateComponents(reallocateComponents), create(a_create), destroy(a_destroy), pageSize(a_pageSize) {}
+
+            ComponentType(std::size_t a_size, std::size_t a_alignment, ReallocatePagesFn reallocatePages, ComponentCreateFn a_create, ComponentDestroyFn a_destroy)
+                : size(a_size), alignment(a_alignment), reallocatePages(reallocatePages), create(a_create), destroy(a_destroy), pageSize(0) {}
 
             std::size_t size;
             std::size_t alignment;
-            ComponentReallocateFn reallocate;
+            union
+            {
+                ReallocateComponentsFn reallocateComponents;
+                ReallocatePagesFn reallocatePages;
+            };
             ComponentCreateFn create;
             ComponentDestroyFn destroy;
+            wIndex pageSize;
         };
 
         /*template<typename T, wIndex PageSize, typename GrowthPolicy>
@@ -128,28 +144,66 @@ namespace wCore
             std::construct_at(header.Data<T>() + header.count, std::forward<Args>(args)...);
 
             return ++header.count;
-        }
+        }*/
 
-        template<typename T>
-        static void ReallocateComponentList(ComponentListHeader& header, wIndex newPageCount)
+        template<typename T, wIndex PageSize>
+        static void ReallocatePages(void*& data, wIndex& pageCount, wIndex newPageCount)
         {
-            T* const data = header.Data<T>();
-
             T** newMemory = static_cast<T**>(
                 ::operator new(newPageCount * sizeof(T*), std::align_val_t(alignof(T*)))
             );
 
             if (data)
             {
-                std::memcpy(newMemory, header.data, header.count * sizeof(T*));
-                ::operator delete(header.begin, std::align_val_t(alignof(T)));
+                std::memcpy(newMemory, data, pageCount * sizeof(T*));
+                ::operator delete(data, std::align_val_t(alignof(T*)));
+                for (wIndex pageIndex = pageCount; pageIndex < newPageCount; ++pageIndex)
+                {
+                    newMemory[pageIndex] = ::operator new(PageSize * sizeof(T), std::align_val_t(alignof(T)));
+                }
             }
 
-            header.data = newMemory;
-            header.capacity = newCapacity;
+            data = newMemory;
+            pageCount = newPageCount;
         }
 
         template<typename T>
+        static void ReallocateComponents(void*& data, wIndex count, wIndex& capacity, wIndex newCapacity)
+        {
+            T* newMemory = static_cast<T*>(
+                ::operator new(newCapacity * sizeof(T), std::align_val_t(alignof(T)))
+            );
+
+            if (data)
+            {
+                if constexpr (std::is_trivially_copyable_v<T>)
+                {
+                    if (count)
+                    {
+                        std::memcpy(newMemory, data, count * sizeof(T));
+                    }
+                }
+                else
+                {
+                    T* end = data + count;
+                    T* dst = newMemory;
+                    for (T* src = data; src != end; ++src, ++dst)
+                    {
+                        std::construct_at(dst, std::move(*src));
+                        if constexpr (!std::is_trivially_destructible_v<T>)
+                        {
+                            std::destroy_at(src);
+                        }
+                    }
+                }
+                ::operator delete(data, std::align_val_t(alignof(T)));
+            }
+
+            data = newMemory;
+            capacity = newCapacity;
+        }
+
+        /*template<typename T>
         static void DestroyKnownListUnchecked(ComponentListHeader& header) noexcept
         {
             if constexpr (!std::is_trivially_destructible_v<T>)
