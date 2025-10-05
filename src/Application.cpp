@@ -18,7 +18,7 @@ namespace wCore
         SceneIndex sceneIndex1 = m_componentSystem.CreateScene();
         W_DEBUG_LOG_INFO("Created Scene1 At Index: {}", sceneIndex1);
 
-        std::vector<ComponentIndex> indexes;
+        std::vector<ComponentHandle> indexes;
         indexes.emplace_back(m_componentSystem.CreateComponent(1, sceneIndex));
         indexes.emplace_back(m_componentSystem.CreateComponent(1, sceneIndex));
         indexes.emplace_back(m_componentSystem.CreateComponent(1, sceneIndex));

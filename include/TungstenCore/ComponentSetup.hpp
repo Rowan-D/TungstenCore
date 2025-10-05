@@ -125,26 +125,45 @@ namespace wCore
         {
             if constexpr (std::is_constructible_v<T, Application&>)
             {
-                return EmplaceKnownList<T, PageSize, GrowthPolicy>(header, app);
+                return EmplaceComponentList<T, PageSize, GrowthPolicy>(header, app);
             }
             else
             {
-                return EmplaceKnownList<T, PageSize, GrowthPolicy>(header);
+                return EmplaceComponentList<T, PageSize, GrowthPolicy>(header);
             }
         }
 
         template<typename T, wIndex PageSize, typename GrowthPolicy, typename... Args>
         static wIndex EmplaceComponentList(ComponentListHeader& header, Args&&... args)
         {
-            if (header.count == header.pageCount * PageSize)
+            if constexpr (PageSize)
             {
-                ReallocateComponentList<T>(header, GrowthPolicy::Next(header.pageCount + 1, header.pageCount));
+                if (header.count == header.pageCount * PageSize)
+                {
+                    ReallocatePages<T>(header, GrowthPolicy::Next(header.pageCount + 1, header.pageCount));
+                }
+            }
+            else
+            {
+                if (header.count == header.pageCount * PageSize)
+                {
+                    ReallocateComponents<T>(header, GrowthPolicy::Next(header.pageCount + 1, header.pageCount));
+                }
             }
 
             std::construct_at(header.Data<T>() + header.count, std::forward<Args>(args)...);
 
             return ++header.count;
         }*/
+
+        template<typename T, wIndex PageSize, typename GrowthPolicy, typename... Args>
+        static wIndex EmplacePages(wUtils::RelocatableFreeListHeader<ComponentIndex>& freeList)
+        {
+            if (freeList.Empty())
+            {
+            }
+            const ComponentIndex componentIndex = freeList.Remove();
+        }
 
         template<typename T, wIndex PageSize>
         static void ReallocatePages(void*& data, wIndex& pageCount, wIndex newPageCount)

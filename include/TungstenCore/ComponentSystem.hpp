@@ -12,12 +12,22 @@ namespace wCore
 
     class SceneGeneration
     {
+    public:
+        constexpr SceneGeneration() noexcept
+            : generation(0) {}
+
+        friend constexpr bool operator==(const SceneGeneration&, const SceneGeneration&) = default;
+
+    private:
         uint32_t generation;
         friend class ComponentSystem;
     };
 
     struct SceneHandle
     {
+        SceneHandle(SceneIndex a_sceneIndex, SceneGeneration a_generation)
+            : sceneIndex(a_sceneIndex), generation(a_generation) {}
+
         SceneIndex sceneIndex;
         SceneGeneration generation;
     };
@@ -32,6 +42,7 @@ namespace wCore
         friend class ComponentSystem;
     };
 
+    template<typename T>
     struct ComponentHandle
     {
         SceneHandle sceneHandle;
@@ -52,10 +63,10 @@ namespace wCore
         void ReserveScenes(wIndex minCapacity);
         inline void ReserveSceneFreeList(wIndex minCapacity) { m_sceneFreeList.Reserve(minCapacity); }
 
-        [[nodiscard]] inline SceneIndex CreateScene() { return CreateScene(""); }
-        [[nodiscard]] SceneIndex CreateScene(std::string_view name);
+        [[nodiscard]] inline SceneHandle CreateScene() { return CreateScene(""); }
+        [[nodiscard]] SceneHandle CreateScene(std::string_view name);
         void DestroyScene(SceneIndex sceneIndex) noexcept;
-        [[nodiscard]] inline bool SceneExists(SceneIndex sceneIndex) const noexcept;
+        [[nodiscard]] inline bool SceneExists(SceneHandle sceneHandle) const noexcept { return sceneHandle.generation == m_sceneGenerations[sceneHandle.sceneIndex]; };
 
         //inline const Scene& GetScene(uint32_t sceneIndex) const { return m_scenes[sceneIndex - 1]; }
 /*
@@ -74,7 +85,7 @@ namespace wCore
         //inline void ReserveComponents(wIndex sceneIndex, wIndex minCapacity) { ReserveKnownList<Component>(m_componentLists[GetSceneStartListIndex(sceneIndex) + ComponentListOffset], minCapacity); }
 
         template<typename T>
-        inline void ReserveComponents(wIndex sceneIndex, wIndex minCapacity) { ReserveKnownList<T>(GetComponentListHeader<T>(sceneIndex), minCapacity); }
+        inline void ReserveComponents(SceneIndex sceneIndex, wIndex minCapacity) { ReserveKnownList<T>(GetComponentListHeader<T>(sceneIndex), minCapacity); }
 /*
         template<typename T>
         [[nodiscard]] ComponentIndex CreateComponent(wIndex sceneIndex)
@@ -286,14 +297,14 @@ namespace wCore
 
         std::byte* m_scenes;
         void** m_ptrs;
+        SceneGeneration* m_sceneGenerations;
         wIndex* m_indexes;
-        wUtils::RelocatableFreeListHeader<wIndex>* m_freeLists;
+        wUtils::RelocatableFreeListHeader<ComponentIndex>* m_freeLists;
         SceneData* m_sceneData;
         wIndex m_sceneSlotCount;
         wIndex m_sceneSlotCapacity;
 
-        std::vector<SceneGeneration> m_sceneGenerations;
-        wUtils::FreeList<wIndex> m_sceneFreeList;
+        wUtils::FreeList<SceneIndex> m_sceneFreeList;
         wUtils::SlotList<std::string> m_sceneNames;
     };
 
