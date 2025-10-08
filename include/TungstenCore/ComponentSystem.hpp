@@ -145,11 +145,33 @@ namespace wCore
             return InitialCapacity;
         }
 
-        struct ListHeader
+        struct ComponentListHeaderHot
+        {
+            ComponentIndex* slotToDense; // scene 0
+            void* dense;
+            ComponentGeneration* generations;
+        };
+
+        struct ComponentListHeaderCold
+        {
+            wIndex slotCount;
+            wIndex slotCapacity;
+            wIndex denceCount;
+            wIndex denceCapacity;
+            wUtils::RelocatableFreeListHeader<ComponentIndex> freeList;
+        };
+
+        struct PageListHeaderHot
         {
             void* data;
-            wIndex count;
-            wIndex capacity;
+            ComponentGeneration* generations;
+        };
+
+        struct PageListHeaderCold
+        {
+            wIndex slotCount;
+            wIndex pageCount;
+            wUtils::RelocatableFreeListHeader<ComponentIndex> freeList;
         };
 
         struct SceneData
@@ -265,7 +287,7 @@ namespace wCore
 
         // Component
         // std::string names
-        [[nodiscard]] inline std::size_t GetSceneStartListIndex(SceneIndex sceneIndex) const noexcept { return (sceneIndex - 1) * m_currentComponentTypeCount; }
+        [[nodiscard]] inline std::size_t GetSceneStartListIndex(SceneIndex sceneIndex) const noexcept { return (sceneIndex - 1) * m_currentComponentListCount; }
 
         [[nodiscard]] static constexpr std::size_t GetComponentListOffset(ComponentTypeIndex componentTypeIndex) noexcept { return componentTypeIndex - 1; }
         [[nodiscard]] inline std::size_t GetComponentListIndex(SceneIndex sceneIndex, ComponentTypeIndex componentTypeIndex) const noexcept { return GetSceneStartListIndex(sceneIndex) + GetComponentListOffset(componentTypeIndex); }
@@ -291,15 +313,21 @@ namespace wCore
         // wIndex slotCount and wIndex capacity for each component type
         static inline constexpr std::size_t GetIndexCountPerScene(std::size_t componentTypeCount) noexcept { return 2 * componentTypeCount; }
 
+        inline wIndex GetCurrentComponentTypeCount() noexcept { return m_currentComponentTypeCount; }
+        inline wIndex GetCurrentComponentListCount() noexcept { return m_currentComponentListCount; }
+        inline wIndex GetCurrentPageListCount() noexcept { return m_currentComponentTypeCount - m_currentComponentListCount; }
+
         Application& m_app;
         ComponentSetup m_componentSetup;
         wIndex m_currentComponentTypeCount;
+        wIndex m_currentComponentListCount;
 
         std::byte* m_scenes;
-        void** m_ptrs;
+        ComponentListHeaderHot* m_componentListsHot;
+        PageListHeaderHot* m_pageListsHot;
         SceneGeneration* m_sceneGenerations;
-        wIndex* m_indexes;
-        wUtils::RelocatableFreeListHeader<ComponentIndex>* m_freeLists;
+        ComponentListHeaderCold* m_componentListsCold;
+        PageListHeaderCold* m_pageListsCold;
         SceneData* m_sceneData;
         wIndex m_sceneSlotCount;
         wIndex m_sceneSlotCapacity;

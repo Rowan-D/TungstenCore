@@ -46,7 +46,8 @@ namespace wCore
             [[nodiscard]] static inline constexpr wIndex NextPageCount(wIndex requestedPageCount, wIndex currentPageCount) noexcept { return requestedPageCount; }
         };
 
-        ComponentSetup() noexcept = default;
+        ComponentSetup() noexcept;
+
         static_assert(std::is_nothrow_default_constructible_v<std::string>);
 
         ComponentSetup(const ComponentSetup&) = delete;
@@ -63,12 +64,13 @@ namespace wCore
             if constexpr (PageSize)
             {
                 m_types.emplace_back(sizeof(T), alignof(T), &ReallocatePages<T, PageSize>, /*&CreateComponent<T, PageSize, GrowthPolicy>*/ nullptr, /*&DestroyKnownListUnchecked<T>*/ nullptr, PageSize);
+                StaticComponentID<T>::Set(m_types.size(), m_types.size() - m_componentListCount - 1);
             }
             else
             {
                 m_types.emplace_back(sizeof(T), alignof(T), &ReallocateComponents<T>, /*&CreateComponent<T, PageSize, GrowthPolicy>*/ nullptr, /*&DestroyKnownListUnchecked<T>*/ nullptr);
+                StaticComponentID<T>::Set(m_types.size(), m_componentListCount++);
             }
-            StaticComponentID<T>::Set(m_names.size());
         }
 
         // internal
@@ -79,7 +81,7 @@ namespace wCore
         inline std::string_view GetComponentTypeName() const noexcept { W_ASSERT(GetComponentTypeIndex<T>(), "Type: {} not added to ComponentSetup", wUtils::DebugGetTypeName<T>()); return GetComponentTypeNameFromTypeIndex(StaticComponentID<T>::Get()); }
 
         inline std::string_view GetComponentTypeNameFromTypeIndex(ComponentTypeIndex componentTypeIndex) const noexcept { W_ASSERT(componentTypeIndex != InvalidComponentType, "ComponentTypeIndex {} is Invalid", InvalidComponentType); W_ASSERT(componentTypeIndex <= m_names.size(), "ComponentTypeIndex: {} out of Range! Component Type Count: {}", componentTypeIndex, m_names.size()); return m_names[componentTypeIndex - 1]; }
-        inline wIndex GetComponentTypeCount() const noexcept { return m_names.size(); }
+        inline wIndex GetComponentTypeCount() const noexcept { return m_types.size(); }
 
     private:
         struct ComponentListHeader
@@ -157,10 +159,14 @@ namespace wCore
         }*/
 
         template<typename T, wIndex PageSize, typename GrowthPolicy, typename... Args>
-        static wIndex EmplacePages(wUtils::RelocatableFreeListHeader<ComponentIndex>& freeList)
+        static wIndex EmplacePages(wUtils::RelocatableFreeListHeader<ComponentIndex>& freeList, )
         {
             if (freeList.Empty())
             {
+                if (slotCount == pageCount * PageSize)
+                {
+
+                }
             }
             const ComponentIndex componentIndex = freeList.Remove();
         }
@@ -237,15 +243,18 @@ namespace wCore
         class StaticComponentID
         {
         public:
-            static inline ComponentTypeIndex Get() { return s_id; }
-            static inline void Set(ComponentTypeIndex id) { s_id = id; }
+            static inline ComponentTypeIndex GetID() { return s_id; }
+            static inline wIndex GetListIndex() { return s_listIndex; }
+            static inline void Set(ComponentTypeIndex id, wIndex listIndex) { s_id = id; s_listIndex =  }
 
         private:
             static inline ComponentTypeIndex s_id;
+            static inline wIndex s_listIndex;
         };
 
         std::vector<std::string> m_names;
         std::vector<ComponentType> m_types;
+        wIndex m_componentListCount;
 
         friend class ComponentSystem;
     };

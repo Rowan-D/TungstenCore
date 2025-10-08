@@ -45,6 +45,7 @@ add_library(TungstenCore
     src/wCorePCH.cpp
     src/Application.cpp
     src/ComponentSystem.cpp
+    src/ComponentSetup.cpp
 )
 
 target_include_directories(TungstenCore PUBLIC
