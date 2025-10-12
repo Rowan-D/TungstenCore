@@ -32,16 +32,6 @@ namespace wCore
         SceneGeneration generation;
     };
 
-    using ComponentIndex = wIndex;
-    inline constexpr ComponentIndex InvalidComponent = 0;
-    inline constexpr ComponentIndex ComponentIndexStart = 1;
-
-    class ComponentGeneration
-    {
-        uint32_t generation;
-        friend class ComponentSystem;
-    };
-
     template<typename T>
     struct ComponentHandle
     {
@@ -144,35 +134,6 @@ namespace wCore
             }
             return InitialCapacity;
         }
-
-        struct ComponentListHeaderHot
-        {
-            ComponentIndex* slotToDense; // scene 0
-            void* dense;
-            ComponentGeneration* generations;
-        };
-
-        struct ComponentListHeaderCold
-        {
-            wIndex slotCount;
-            wIndex slotCapacity;
-            wIndex denceCount;
-            wIndex denceCapacity;
-            wUtils::RelocatableFreeListHeader<ComponentIndex> freeList;
-        };
-
-        struct PageListHeaderHot
-        {
-            void* data;
-            ComponentGeneration* generations;
-        };
-
-        struct PageListHeaderCold
-        {
-            wIndex slotCount;
-            wIndex pageCount;
-            wUtils::RelocatableFreeListHeader<ComponentIndex> freeList;
-        };
 
         struct SceneData
         {
@@ -323,11 +284,11 @@ namespace wCore
         wIndex m_currentComponentListCount;
 
         std::byte* m_scenes;
-        ComponentListHeaderHot* m_componentListsHot;
-        PageListHeaderHot* m_pageListsHot;
+        ComponentSetup::ComponentListHeaderHot* m_componentListsHot;
+        ComponentSetup::PageListHeaderHot* m_pageListsHot;
         SceneGeneration* m_sceneGenerations;
-        ComponentListHeaderCold* m_componentListsCold;
-        PageListHeaderCold* m_pageListsCold;
+        ComponentSetup::ComponentListHeaderCold* m_componentListsCold;
+        ComponentSetup::PageListHeaderCold* m_pageListsCold;
         SceneData* m_sceneData;
         wIndex m_sceneSlotCount;
         wIndex m_sceneSlotCapacity;
@@ -345,7 +306,7 @@ namespace wCore
         }
 
         [[nodiscard]] constexpr SceneHandle GetHandle() const { return m_handle; }
-        [[nodiscard]] constexpr SceneIndex GetIndex()  const { return m_handle.sceneIndex; }
+        [[nodiscard]] constexpr SceneIndex GetIndex() const { return m_handle.sceneIndex; }
         [[nodiscard]] constexpr SceneGeneration GetGeneration()  const { return m_handle.generation; }
         [[nodiscard]] constexpr ComponentSystem& GetComponentSystem()  const { return m_componentSystem; }
 
@@ -354,16 +315,17 @@ namespace wCore
         ComponentSystem& m_componentSystem;
     };
 
+    template<typename T>
     struct Component
     {
     public:
-        Component(ComponentHandle handle, ComponentSystem& componentSystem)
+        Component(ComponentHandle<T> handle, ComponentSystem& componentSystem)
             : m_handle(handle), m_componentSystem(componentSystem)
         {
         }
 
         [[nodiscard]] constexpr Scene GetScene() const { return Scene(m_handle.sceneHandle, m_componentSystem); }
-        [[nodiscard]] constexpr ComponentHandle GetHandle() const { return m_handle; }
+        [[nodiscard]] constexpr ComponentHandle<T> GetHandle() const { return m_handle; }
         [[nodiscard]] constexpr SceneHandle GetSceneHandle() const { return m_handle.sceneHandle; }
         [[nodiscard]] constexpr SceneIndex GetSceneIndex() const { return m_handle.sceneHandle.sceneIndex; }
         [[nodiscard]] constexpr SceneGeneration GetSceneGeneration() const { return m_handle.sceneHandle.generation; }
@@ -372,7 +334,7 @@ namespace wCore
         [[nodiscard]] constexpr ComponentSystem& GetComponentSystem() const { return m_componentSystem; }
 
     private:
-        ComponentHandle m_handle;
+        ComponentHandle<T> m_handle;
         ComponentSystem& m_componentSystem;
     };
 }

@@ -14,6 +14,16 @@ namespace wCore
     inline constexpr ComponentTypeIndex InvalidComponentType = 0;
     inline constexpr ComponentTypeIndex ComponentTypeIndexStart = 1;
 
+    using ComponentIndex = wIndex;
+    inline constexpr ComponentIndex InvalidComponent = 0;
+    inline constexpr ComponentIndex ComponentIndexStart = 1;
+
+    class ComponentGeneration
+    {
+        uint32_t generation;
+        friend class ComponentSystem;
+    };
+
     class ComponentSetup
     {
     public:
@@ -59,7 +69,7 @@ namespace wCore
         void Add(std::string_view typeName)
         {
             static_assert(std::is_nothrow_destructible_v<T>, "Components must be nothrow-destructible");
-            W_ASSERT(!StaticComponentID<T>::Get(), "Component: {} Already added to ComponentSetup!", typeName);
+            W_ASSERT(!StaticComponentID<T>::GetID(), "Component: {} Already added to ComponentSetup!", typeName);
             m_names.emplace_back(typeName);
             if constexpr (PageSize)
             {
@@ -84,31 +94,48 @@ namespace wCore
         inline wIndex GetComponentTypeCount() const noexcept { return m_types.size(); }
 
     private:
-        struct ComponentListHeader
+        struct ComponentListHeaderHot
         {
-            void* data{};
-            wIndex count{};
-            wIndex pageCount{};
-
-            template<typename T>
-            [[nodiscard]] inline T** Data() noexcept { return static_cast<T*>(data); }
-
-            template<typename T>
-            [[nodiscard]] inline const T** Data() const noexcept { return static_cast<const T*>(data); }
+            void* dense;
+            ComponentIndex* slotToDense; // scene 0
+            ComponentGeneration* generations;
         };
 
-        using ReallocateComponentsFn = void(*)(void*& data, wIndex slotCount, wIndex& capacity, wIndex newSlotCapacity);
-        using ReallocatePagesFn = void(*)(void*& data, wIndex& pageCount, wIndex newPageCount);
-        using ComponentCreateFn = wIndex(*)(ComponentListHeader& header, Application& app);
-        using ComponentDestroyFn = void(*)(ComponentListHeader& header);
+        struct ComponentListHeaderCold
+        {
+            wIndex slotCount;
+            wIndex denceCount;
+            wIndex capacity;
+            wUtils::RelocatableFreeListHeader<ComponentIndex> freeList;
+        };
+
+        struct PageListHeaderHot
+        {
+            void* data;
+            ComponentGeneration* generations;
+        };
+
+        struct PageListHeaderCold
+        {
+            wIndex slotCount;
+            wIndex pageCount;
+            wUtils::RelocatableFreeListHeader<ComponentIndex> freeList;
+        };
+
+        using ReallocateComponentsFn = void(*)(ComponentListHeaderHot& headerHot, ComponentListHeaderCold& headerCold, wIndex newSlotCapacity);
+        using ReallocatePagesFn = void(*)(PageListHeaderHot& headerHot, PageListHeaderCold& headerCold, wIndex newPageCount);
+        using ComponentCreateFn = wIndex(*)(ComponentListHeaderHot& headerHot, ComponentListHeaderCold& headerCold, Application& app);
+        using PageCreateFn = wIndex(*)(PageListHeaderHot& headerHot, PageListHeaderCold& headerCold, Application& app);
+        using ComponentDestroyFn = void(*)(ComponentListHeaderHot& headerHot, ComponentListHeaderCold& headerCold);
+        using PageDestroyFn = void(*)(PageListHeaderHot& headerHot, PageListHeaderCold& headerCold);
 
         struct ComponentType
         {
-            ComponentType(std::size_t a_size, std::size_t a_alignment, ReallocateComponentsFn reallocateComponents, ComponentCreateFn a_create, ComponentDestroyFn a_destroy, wIndex a_pageSize)
-                : size(a_size), alignment(a_alignment), reallocateComponents(reallocateComponents), create(a_create), destroy(a_destroy), pageSize(a_pageSize) {}
+            ComponentType(std::size_t a_size, std::size_t a_alignment, ReallocateComponentsFn a_reallocateComponents, ComponentCreateFn a_create, ComponentDestroyFn a_destroy)
+                : size(a_size), alignment(a_alignment), reallocateComponents(a_reallocateComponents), componentCreate(a_create), componentDestroy(a_destroy), pageSize(0) {}
 
-            ComponentType(std::size_t a_size, std::size_t a_alignment, ReallocatePagesFn reallocatePages, ComponentCreateFn a_create, ComponentDestroyFn a_destroy)
-                : size(a_size), alignment(a_alignment), reallocatePages(reallocatePages), create(a_create), destroy(a_destroy), pageSize(0) {}
+            ComponentType(std::size_t a_size, std::size_t a_alignment, ReallocatePagesFn a_reallocatePages, PageCreateFn a_create, PageDestroyFn a_destroy, wIndex a_pageSize)
+                : size(a_size), alignment(a_alignment), reallocatePages(a_reallocatePages), pageCreate(a_create), pageDestroy(a_destroy), pageSize(a_pageSize) {}
 
             std::size_t size;
             std::size_t alignment;
@@ -117,9 +144,18 @@ namespace wCore
                 ReallocateComponentsFn reallocateComponents;
                 ReallocatePagesFn reallocatePages;
             };
-            ComponentCreateFn create;
-            ComponentDestroyFn destroy;
+            union
+            {
+                ComponentCreateFn componentCreate;
+                PageCreateFn pageCreate;
+            };
+            union
+            {
+                ComponentDestroyFn componentDestroy;
+                PageDestroyFn pageDestroy;
+            };
             wIndex pageSize;
+
         };
 
         /*template<typename T, wIndex PageSize, typename GrowthPolicy>
@@ -158,7 +194,7 @@ namespace wCore
             return ++header.count;
         }*/
 
-        template<typename T, wIndex PageSize, typename GrowthPolicy, typename... Args>
+        /*template<typename T, wIndex PageSize, typename GrowthPolicy, typename... Args>
         static wIndex EmplacePages(wUtils::RelocatableFreeListHeader<ComponentIndex>& freeList, )
         {
             if (freeList.Empty())
@@ -169,35 +205,48 @@ namespace wCore
                 }
             }
             const ComponentIndex componentIndex = freeList.Remove();
-        }
+        }*/
 
         template<typename T, wIndex PageSize>
-        static void ReallocatePages(void*& data, wIndex& pageCount, wIndex newPageCount)
+        static void ReallocatePages(PageListHeaderHot& headerHot, PageListHeaderCold& headerCold, wIndex newPageCount)
         {
             T** newMemory = static_cast<T**>(
                 ::operator new(newPageCount * sizeof(T*), std::align_val_t(alignof(T*)))
             );
 
-            if (data)
+            if (headerHot.data)
             {
-                std::memcpy(newMemory, data, pageCount * sizeof(T*));
-                ::operator delete(data, std::align_val_t(alignof(T*)));
-                for (wIndex pageIndex = pageCount; pageIndex < newPageCount; ++pageIndex)
+                std::memcpy(newMemory, headerHot.data, headerCold.pageCount * sizeof(T*));
+                ::operator delete(headerHot.data, std::align_val_t(alignof(T*)));
+                for (wIndex pageIndex = headerCold.pageCount; pageIndex < newPageCount; ++pageIndex)
                 {
-                    newMemory[pageIndex] = ::operator new(PageSize * sizeof(T), std::align_val_t(alignof(T)));
+                    newMemory[pageIndex] = static_cast<T*>(
+                        ::operator new(PageSize * sizeof(T), std::align_val_t(alignof(T)))
+                    );
                 }
             }
 
-            data = newMemory;
-            pageCount = newPageCount;
+            headerHot.data = newMemory;
+            headerCold.pageCount = newPageCount;
         }
 
         template<typename T>
-        static void ReallocateComponents(void*& data, wIndex count, wIndex& capacity, wIndex newCapacity)
+        static void ReallocateComponents(ComponentListHeaderHot& headerHot, ComponentListHeaderCold& headerCold, wIndex newCapacity)
         {
+            std::size_t offset = newCapacity * sizeof(T);
+
+            offset = wUtils::AlignUp(offset, alignof(ComponentIndex));
+            const std::size_t slotToDenceOffset = offset;
+            offset += newCapacity * sizeof(ComponentIndex);
+
+            constexpr std::size_t alignment = wUtils::Max(alignof(T), alignof(ComponentIndex));
+
             T* newMemory = static_cast<T*>(
-                ::operator new(newCapacity * sizeof(T), std::align_val_t(alignof(T)))
+                ::operator new(offset, std::align_val_t(alignment))
             );
+
+            headerHot.dense = newMemory;
+            headerHot.slotToDense = reinterpret_cast<ComponentIndex*>(newMemory + slotToDenceOffset);
 
             if (data)
             {
@@ -224,7 +273,6 @@ namespace wCore
                 ::operator delete(data, std::align_val_t(alignof(T)));
             }
 
-            data = newMemory;
             capacity = newCapacity;
         }
 
@@ -245,7 +293,7 @@ namespace wCore
         public:
             static inline ComponentTypeIndex GetID() { return s_id; }
             static inline wIndex GetListIndex() { return s_listIndex; }
-            static inline void Set(ComponentTypeIndex id, wIndex listIndex) { s_id = id; s_listIndex =  }
+            static inline void Set(ComponentTypeIndex id, wIndex listIndex) { s_id = id; s_listIndex = listIndex; }
 
         private:
             static inline ComponentTypeIndex s_id;
