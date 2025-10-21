@@ -14,6 +14,10 @@ namespace wCore
     inline constexpr ComponentTypeIndex InvalidComponentType = 0;
     inline constexpr ComponentTypeIndex ComponentTypeIndexStart = 1;
 
+    using SceneIndex = wIndex;
+    inline constexpr SceneIndex InvalidScene = 0;
+    inline constexpr SceneIndex SceneIndexStart = 1;
+
     using ComponentIndex = wIndex;
     inline constexpr ComponentIndex InvalidComponent = 0;
     inline constexpr ComponentIndex ComponentIndexStart = 1;
@@ -73,13 +77,15 @@ namespace wCore
             m_names.emplace_back(typeName);
             if constexpr (PageSize)
             {
-                m_types.emplace_back(sizeof(T), alignof(T), &ReallocatePages<T, PageSize>, /*&CreateComponent<T, PageSize, GrowthPolicy>*/ nullptr, /*&DestroyKnownListUnchecked<T>*/ nullptr, PageSize);
-                StaticComponentID<T>::Set(m_types.size(), m_types.size() - m_componentListCount - 1);
+                const wIndex listIndex = m_types.size() - m_componentListCount;
+                m_types.emplace_back(sizeof(T), alignof(T), &ReallocatePages<T, PageSize>, &CreateComponent<T, PageSize, GrowthPolicy>, /*&DestroyKnownListUnchecked<T>*/ nullptr, PageSize, listIndex);
+                StaticComponentID<T>::Set(m_types.size(), listIndex);
             }
             else
             {
-                m_types.emplace_back(sizeof(T), alignof(T), &ReallocateComponents<T>, /*&CreateComponent<T, PageSize, GrowthPolicy>*/ nullptr, /*&DestroyKnownListUnchecked<T>*/ nullptr);
-                StaticComponentID<T>::Set(m_types.size(), m_componentListCount++);
+                const wIndex listIndex = m_componentListCount++;
+                m_types.emplace_back(sizeof(T), alignof(T), &ReallocateComponents<T>, &CreateComponent<T, PageSize, GrowthPolicy>, /*&DestroyKnownListUnchecked<T>*/ nullptr, listIndex);
+                StaticComponentID<T>::Set(m_types.size(), listIndex);
             }
         }
 
@@ -104,7 +110,7 @@ namespace wCore
         struct ComponentListHeaderCold
         {
             wIndex slotCount;
-            wIndex denceCount;
+            wIndex denseCount;
             wIndex capacity;
             wUtils::RelocatableFreeListHeader<ComponentIndex> freeList;
         };
@@ -122,20 +128,35 @@ namespace wCore
             wUtils::RelocatableFreeListHeader<ComponentIndex> freeList;
         };
 
+        struct CreateCtx
+        {
+            [[nodiscard]] inline wIndex GetCurrentComponentTypeCount() noexcept { return currentComponentTypeCount; }
+            [[nodiscard]] inline wIndex GetCurrentComponentListCount() noexcept { return currentComponentListCount; }
+            [[nodiscard]] inline wIndex GetCurrentPageListCount() noexcept { return currentComponentTypeCount - currentComponentListCount; }
+
+            void UpdateCurrentComponentListCount(wIndex componentTypeCount, wIndex componentListCount) noexcept;
+
+            ComponentListHeaderHot* componentListsHot;
+            PageListHeaderHot* pageListsHot;
+            ComponentListHeaderCold* componentListsCold;
+            PageListHeaderCold* pageListsCold;
+            wIndex currentComponentTypeCount;
+            wIndex currentComponentListCount;
+        };
+
         using ReallocateComponentsFn = void(*)(ComponentListHeaderHot& headerHot, ComponentListHeaderCold& headerCold, wIndex newSlotCapacity);
         using ReallocatePagesFn = void(*)(PageListHeaderHot& headerHot, PageListHeaderCold& headerCold, wIndex newPageCount);
-        using ComponentCreateFn = wIndex(*)(ComponentListHeaderHot& headerHot, ComponentListHeaderCold& headerCold, Application& app);
-        using PageCreateFn = wIndex(*)(PageListHeaderHot& headerHot, PageListHeaderCold& headerCold, Application& app);
+        using ComponentCreateFn = std::pair<ComponentIndex, ComponentGeneration>(*)(SceneIndex sceneIndex, CreateCtx& createCtx, Application& app);
         using ComponentDestroyFn = void(*)(ComponentListHeaderHot& headerHot, ComponentListHeaderCold& headerCold);
         using PageDestroyFn = void(*)(PageListHeaderHot& headerHot, PageListHeaderCold& headerCold);
 
         struct ComponentType
         {
-            ComponentType(std::size_t a_size, std::size_t a_alignment, ReallocateComponentsFn a_reallocateComponents, ComponentCreateFn a_create, ComponentDestroyFn a_destroy)
-                : size(a_size), alignment(a_alignment), reallocateComponents(a_reallocateComponents), componentCreate(a_create), componentDestroy(a_destroy), pageSize(0) {}
+            ComponentType(std::size_t a_size, std::size_t a_alignment, ReallocateComponentsFn a_reallocateComponents, ComponentCreateFn a_create, ComponentDestroyFn a_destroy, wIndex a_listIndex)
+                : size(a_size), alignment(a_alignment), reallocateComponents(a_reallocateComponents), create(a_create), componentDestroy(a_destroy), pageSize(0), listIndex(a_listIndex) {}
 
-            ComponentType(std::size_t a_size, std::size_t a_alignment, ReallocatePagesFn a_reallocatePages, PageCreateFn a_create, PageDestroyFn a_destroy, wIndex a_pageSize)
-                : size(a_size), alignment(a_alignment), reallocatePages(a_reallocatePages), pageCreate(a_create), pageDestroy(a_destroy), pageSize(a_pageSize) {}
+            ComponentType(std::size_t a_size, std::size_t a_alignment, ReallocatePagesFn a_reallocatePages, ComponentCreateFn a_create, PageDestroyFn a_destroy, wIndex a_listIndex, wIndex a_pageSize)
+                : size(a_size), alignment(a_alignment), reallocatePages(a_reallocatePages), create(a_create), pageDestroy(a_destroy), pageSize(a_pageSize), listIndex(a_listIndex) {}
 
             std::size_t size;
             std::size_t alignment;
@@ -144,19 +165,34 @@ namespace wCore
                 ReallocateComponentsFn reallocateComponents;
                 ReallocatePagesFn reallocatePages;
             };
-            union
-            {
-                ComponentCreateFn componentCreate;
-                PageCreateFn pageCreate;
-            };
+            ComponentCreateFn create;
             union
             {
                 ComponentDestroyFn componentDestroy;
                 PageDestroyFn pageDestroy;
             };
             wIndex pageSize;
-
+            wIndex listIndex;
         };
+
+        template<typename T, wIndex PageSize, typename GrowthPolicy>
+        static std::pair<ComponentIndex, ComponentGeneration> CreateComponent(SceneIndex sceneIndex, CreateCtx& createCtx, Application& app)
+        {
+            if (PageSize)
+            {
+                const std::size_t sceneStartPageIndex = (sceneIndex - 1) * createCtx.GetCurrentPageListCount();
+                const std::size_t pageListHeaderIndex = sceneStartPageIndex + StaticComponentID<T>::GetListIndex();
+                PageListHeaderHot& heagerHot = createCtx.pageListsHot[pageListHeaderIndex];
+                PageListHeaderCold& heagerCold = createCtx.pageListsCold[pageListHeaderIndex];
+            }
+            else
+            {
+                const std::size_t sceneStartComponentIndex = (sceneIndex - 1) * createCtx.GetCurrentComponentListCount();
+                const std::size_t componentListHeaderIndex = sceneStartComponentIndex + StaticComponentID<T>::GetListIndex();
+                ComponentListHeaderHot& heagerHot = createCtx.componentListsHot[componentListHeaderIndex];
+                ComponentListHeaderCold& heagerCold = createCtx.componentListsCold[componentListHeaderIndex];
+            }
+        }
 
         /*template<typename T, wIndex PageSize, typename GrowthPolicy>
         static wIndex CreateComponent(ComponentListHeader& header, Application& app)
@@ -241,27 +277,25 @@ namespace wCore
 
             constexpr std::size_t alignment = wUtils::Max(alignof(T), alignof(ComponentIndex));
 
-            T* newMemory = static_cast<T*>(
+            std::byte* newMemory = static_cast<std::byte*>(
                 ::operator new(offset, std::align_val_t(alignment))
             );
 
-            headerHot.dense = newMemory;
-            headerHot.slotToDense = reinterpret_cast<ComponentIndex*>(newMemory + slotToDenceOffset);
-
-            if (data)
+            if (headerHot.dense)
             {
                 if constexpr (std::is_trivially_copyable_v<T>)
                 {
-                    if (count)
+                    if (headerCold.denseCount)
                     {
-                        std::memcpy(newMemory, data, count * sizeof(T));
+                        std::memcpy(newMemory, headerHot.dense, headerCold.denseCount * sizeof(T));
                     }
                 }
                 else
                 {
-                    T* end = data + count;
+                    T* const begin = static_cast<T*>(headerHot.dense);
+                    T* end = begin + headerCold.denseCount;
                     T* dst = newMemory;
-                    for (T* src = data; src != end; ++src, ++dst)
+                    for (T* src = begin; src != end; ++src, ++dst)
                     {
                         std::construct_at(dst, std::move(*src));
                         if constexpr (!std::is_trivially_destructible_v<T>)
@@ -270,10 +304,17 @@ namespace wCore
                         }
                     }
                 }
-                ::operator delete(data, std::align_val_t(alignof(T)));
+                if (headerCold.slotCount)
+                {
+                    std::memcpy(newMemory, headerHot.dense, headerCold.slotCount * sizeof(ComponentIndex));
+                }
+                ::operator delete(headerHot.dense, std::align_val_t(alignment));
             }
 
-            capacity = newCapacity;
+            headerHot.dense = newMemory;
+            headerHot.slotToDense = reinterpret_cast<ComponentIndex*>(newMemory + slotToDenceOffset);
+
+            headerCold.capacity = newCapacity;
         }
 
         /*template<typename T>
@@ -293,12 +334,15 @@ namespace wCore
         public:
             static inline ComponentTypeIndex GetID() { return s_id; }
             static inline wIndex GetListIndex() { return s_listIndex; }
-            static inline void Set(ComponentTypeIndex id, wIndex listIndex) { s_id = id; s_listIndex = listIndex; }
+            static inline void Set(ComponentTypeIndex id, wIndex listIndex, wIndex pageSize) { s_id = id; s_listIndex = listIndex; s_pageSize = pageSize; }
 
         private:
             static inline ComponentTypeIndex s_id;
             static inline wIndex s_listIndex;
+            static inline wIndex s_pageSize;
         };
+
+
 
         std::vector<std::string> m_names;
         std::vector<ComponentType> m_types;

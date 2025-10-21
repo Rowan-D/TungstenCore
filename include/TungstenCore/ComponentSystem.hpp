@@ -6,10 +6,6 @@
 
 namespace wCore
 {
-    using SceneIndex = wIndex;
-    inline constexpr SceneIndex InvalidScene = 0;
-    inline constexpr SceneIndex SceneIndexStart = 1;
-
     class SceneGeneration
     {
     public:
@@ -35,6 +31,20 @@ namespace wCore
     template<typename T>
     struct ComponentHandle
     {
+        ComponentHandle(SceneHandle a_sceneHandle, ComponentIndex a_componentIndex, ComponentGeneration a_generation)
+            : sceneHandle(a_sceneHandle), componentIndex(a_componentIndex), generation(a_generation) {}
+
+        SceneHandle sceneHandle;
+        ComponentIndex componentIndex;
+        ComponentGeneration generation;
+    };
+
+    struct ComponentHandleAny
+    {
+        ComponentHandleAny(ComponentTypeIndex a_componentTypeIndex, SceneHandle a_sceneHandle, ComponentIndex a_componentIndex, ComponentGeneration a_generation)
+            : componentTypeIndex(a_componentTypeIndex), sceneHandle(a_sceneHandle), componentIndex(a_componentIndex), generation(a_generation) {}
+
+        ComponentTypeIndex componentTypeIndex;
         SceneHandle sceneHandle;
         ComponentIndex componentIndex;
         ComponentGeneration generation;
@@ -76,16 +86,22 @@ namespace wCore
 
         template<typename T>
         inline void ReserveComponents(SceneIndex sceneIndex, wIndex minCapacity) { ReserveKnownList<T>(GetComponentListHeader<T>(sceneIndex), minCapacity); }
-/*
-        template<typename T>
-        [[nodiscard]] ComponentIndex CreateComponent(wIndex sceneIndex)
-        {
-            const std::size_t sceneStartListIndex = GetSceneStartListIndex(sceneIndex);
-            const wIndex listIndex = ComponentSetup::CreateComponent<T>(m_componentLists[sceneStartListIndex + GetComponentListOffset<T>()], m_app);
-            return ComponentSetup::EmplaceKnownList<Component>(m_componentLists[sceneStartListIndex + ComponentListOffset], 0, listIndex) + 1;
-        }
 
         template<typename T>
+        [[nodiscard]] ComponentHandle<T> CreateComponent(SceneHandle sceneHandle)
+        {
+            auto [componentIndex, generation] = ComponentSetup::CreateComponent(sceneHandle.sceneIndex, m_createCtx, m_app)
+            return ComponentHandle(sceneHandle, componentIndex, generation);
+        }
+
+        /*template<typename T, typename... Args>
+        [[nodiscard]] ComponentHandle<T> EmplaceComponent(SceneHandle sceneHandle, Args&&... args)
+        {
+            auto [componentIndex, generation] = ComponentSetup::CreateComponent(sceneHandle.sceneIndex, m_createCtx, m_app)
+            return ComponentHandle(sceneHandle, componentIndex, generation);
+        }*/
+
+        /*template<typename T>
         [[nodiscard]] T& GetComponent(wIndex sceneIndex, ComponentIndex componentIndex)
         {
             const std::size_t sceneStartListIndex = GetSceneStartListIndex(sceneIndex);
@@ -119,7 +135,7 @@ namespace wCore
 
         // Internal
         void ReserveComponents(ComponentTypeIndex componentTypeIndex, SceneIndex sceneIndex, wIndex minCapacity);
-        [[nodiscard]] ComponentIndex CreateComponent(ComponentTypeIndex componentTypeIndex, SceneIndex sceneIndex);
+        [[nodiscard]] ComponentHandleAny CreateComponent(ComponentTypeIndex componentTypeIndex, SceneHandle scene);
 
         [[nodiscard]] inline wIndex GetComponentCount(ComponentTypeIndex componentTypeIndex, wIndex sceneIndex) const;
         [[nodiscard]] inline wIndex GetComponentCapacity(ComponentTypeIndex componentTypeIndex, wIndex sceneIndex) const;
@@ -274,21 +290,13 @@ namespace wCore
         // wIndex slotCount and wIndex capacity for each component type
         static inline constexpr std::size_t GetIndexCountPerScene(std::size_t componentTypeCount) noexcept { return 2 * componentTypeCount; }
 
-        inline wIndex GetCurrentComponentTypeCount() noexcept { return m_currentComponentTypeCount; }
-        inline wIndex GetCurrentComponentListCount() noexcept { return m_currentComponentListCount; }
-        inline wIndex GetCurrentPageListCount() noexcept { return m_currentComponentTypeCount - m_currentComponentListCount; }
 
         Application& m_app;
         ComponentSetup m_componentSetup;
-        wIndex m_currentComponentTypeCount;
-        wIndex m_currentComponentListCount;
 
         std::byte* m_scenes;
-        ComponentSetup::ComponentListHeaderHot* m_componentListsHot;
-        ComponentSetup::PageListHeaderHot* m_pageListsHot;
         SceneGeneration* m_sceneGenerations;
-        ComponentSetup::ComponentListHeaderCold* m_componentListsCold;
-        ComponentSetup::PageListHeaderCold* m_pageListsCold;
+        ComponentSetup::CreateCtx m_createCtx;
         SceneData* m_sceneData;
         wIndex m_sceneSlotCount;
         wIndex m_sceneSlotCapacity;
